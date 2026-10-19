@@ -1,0 +1,55 @@
+appId: com.sfzarin.assetwarehouse
+productName: Asset Warehouse Manager
+copyright: Copyright © Sanat Farabar Zarin Co.
+
+directories:
+  output: dist
+  buildResources: build
+
+# Everything the packaged app needs at runtime: the electron-vite build
+# output, package.json (read for the "main" entry and app metadata), and
+# resources/ — which is NOT part of the Vite build, but is read directly
+# by the main process at runtime (exportService.js, backupService.js) via
+# path.join(app.getAppPath(), 'resources', ...). app.getAppPath() resolves
+# to this same package root in both dev and packaged builds, so that code
+# needs no changes — it just needs resources/ to actually be here.
+files:
+  - out/**/*
+  - package.json
+  - resources/**/*
+  - '!src'
+  - '!tests'
+
+# better-sqlite3's native .node binding can't be loaded from inside an
+# asar archive (asar transparently supports byte-reads like fs.readFile,
+# which is all resources/'s images/fonts need, but not dlopen/LoadLibrary
+# for a real native module) — this pulls it out to a sibling
+# app.asar.unpacked/ folder instead. Skipping this would build without
+# error but crash immediately on launch.
+# better-sqlite3 is N-API (ABI-stable across Node/Electron versions — see
+# database/README.md), so electron-builder's default native-module rebuild
+# step isn't needed here and just adds a slow, fragile dependency on
+# node-gyp + Visual Studio Build Tools being correctly set up on Windows.
+npmRebuild: false
+
+asarUnpack:
+  - '**/node_modules/better-sqlite3/**/*'
+
+win:
+  # Packaging phase — nsis only, portable dropped. Both were building
+  # successfully before, which was itself the problem: a "portable" build
+  # is a single self-extracting exe that launches the app directly with
+  # no install step, no Start Menu entry, no uninstaller — and sitting
+  # next to the real installer in dist/, similarly named and the same
+  # file type, it's an easy file to hand someone by mistake. With only
+  # nsis targeted, there is exactly one .exe in dist/ and it is
+  # unambiguously the one to hand out.
+  target:
+    - nsis
+  icon: build/icon.ico
+
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true

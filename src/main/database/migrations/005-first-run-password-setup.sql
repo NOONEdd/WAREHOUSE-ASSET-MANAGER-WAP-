@@ -1,0 +1,31 @@
+-- Migration 005: First-Run Security — adds users.needs_password_setup.
+--
+-- The problem this fixes: bootstrapAdminIfNeeded() used to generate a
+-- random password and print it to the console, leaving whoever deploys
+-- the app dependent on finding/saving that one console line. This column
+-- lets the app instead require the operator to choose their own password
+-- on first launch, with no usable password ever generated or shown.
+--
+-- Plain ADD COLUMN (not a table rebuild) is safe here because this is an
+-- addition, not a uniqueness/shape change like migrations 002/004 — no
+-- existing row needs to move, and every existing row keeps working
+-- exactly as it did.
+--
+-- Why DEFAULT 0 is correct for every row that already exists: this
+-- column's whole purpose is to gate login for a row that was created
+-- WITHOUT a real password. An admin account created before this phase
+-- shipped has always had a real, working password (Administrator set it
+-- up some other way, or is currently using the console-printed random
+-- one from the old bootstrap flow) — flipping that existing row to
+-- needs_password_setup = 1 would lock out a currently-working install
+-- the next time it upgrades, which is exactly the kind of surprise
+-- migrations must never cause. Only a bootstrap that runs AFTER this
+-- migration ships (authService.bootstrapAdminIfNeeded, via
+-- userRepository.create's needsPasswordSetup option) ever explicitly
+-- writes a 1 into this column.
+--
+-- Guarded in connection.js to run only if users doesn't have this column
+-- yet, same guard style as migration 003's is_active column on
+-- asset_statuses.
+
+ALTER TABLE users ADD COLUMN needs_password_setup INTEGER NOT NULL DEFAULT 0;

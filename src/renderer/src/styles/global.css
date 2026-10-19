@@ -1,0 +1,546 @@
+/* Font files are bundled locally — the app is fully offline (Phase 1 requirement) */
+@font-face {
+  font-family: 'Vazirmatn';
+  src: url('../fonts/Vazirmatn/Vazirmatn[wght].woff2') format('woff2-variations');
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'JetBrains Mono';
+  src: url('../fonts/JetBrainsMono/JetBrainsMono-Regular.woff2') format('woff2');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'JetBrains Mono';
+  src: url('../fonts/JetBrainsMono/JetBrainsMono-Medium.woff2') format('woff2');
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+
+:root {
+  /* Design tokens — see Phase 7 doc for the reasoning behind this palette */
+  --awm-ink: #1e2a3a;
+  --awm-ink-hover: #2c3a4d;
+  --awm-paper: #f6f4ee;
+  --awm-surface: #ffffff;
+  --awm-border: #e3dfd5;
+  --awm-accent: #c8862b;
+  --awm-accent-hover: #b37624;
+  --awm-text: #232323;
+  --awm-text-secondary: #6b675e;
+
+  --awm-status-warehouse: #4a6fa5;
+  --awm-status-issued: #c8862b;
+  --awm-status-returned: #5a8f5e;
+  --awm-status-maintenance: #8a6d3f;
+  --awm-status-damaged: #b0472f;
+  --awm-status-lost: #7a5980;
+
+  /* Phase 9 — icon-glyph colors for the Dashboard's stat-card icon chips.
+     Separate from --awm-status-* above (which stay as literal brand
+     colors so StatusBadge/the donut chart look identical in both
+     themes) because a small icon glyph read individually against a
+     tinted chip needs its own contrast pass per theme — several of the
+     plain status colors clear only ~2.7–3.2:1 against a dark card,
+     under WCAG's 3:1 floor even for graphical objects. Light-mode values
+     match the status colors 1:1 (already ≥4.5:1 against a white card);
+     dark-mode values are lightened variants of the same hue. */
+  --awm-icon-navy: #1e2a3a;
+  --awm-icon-blue: #4a6fa5;
+  --awm-icon-brown: #8a6d3f;
+  --awm-icon-red: #b0472f;
+
+  /* Import-preview classification colors (ImportPreviewStep) — separate
+     from the status-badge system above since these represent row
+     validity (valid/warning/duplicate/error), not a physical asset's
+     status. */
+  --awm-preview-valid: #2e7d32;
+  --awm-preview-warning: #b26a00;
+  --awm-preview-duplicate: #0d5aa7;
+  --awm-preview-error: #c62828;
+
+  /* Phase 8 — UI/UX Polish. A very soft, barely-there elevation for
+     bordered Cards (the app's default — see theme.js) — antd only
+     applies its own boxShadowTertiary token to *non*-bordered cards, so
+     bordered ones (every Card in this app) get none by default. Tuned
+     low-opacity, tied to the ink color rather than flat black, so it
+     reads as "a slightly raised surface" rather than a drop-shadow
+     effect — see the frontend-design skill's warning against
+     glow/shadow excess. */
+  --awm-shadow-card: 0 1px 2px rgba(30, 42, 58, 0.05), 0 4px 14px rgba(30, 42, 58, 0.06);
+
+  /* One shared hover tint for anything sitting on a Card surface that
+     needs a "this is interactive" cue but isn't an antd Table (which
+     has its own rowHoverBg token, set to this same value in theme.js) —
+     currently just the Dashboard's recent-activity rows. */
+  --awm-hover-tint: #f5f1e6;
+
+  /* Phase 10 — Premium Visual Refinement. Three additions to the existing
+     palette, not a new one: a second, deeper ink stop for gradients (the
+     Dashboard hero, the sidebar) so "navy" has room to read as a surface
+     with depth rather than a flat fill; a "sunken" tone a shade deeper
+     than --awm-paper for toolbars/dropzones that should sit visually
+     *behind* the cards on top of them; and a small radius scale so the
+     hero/toolbar/dropzone treatments share one consistent curvature
+     rather than each picking its own. */
+  --awm-ink-deep: #141c27;
+  --awm-surface-sunken: #f1eee4;
+  --awm-radius-sm: 4px;
+  --awm-radius-md: 8px;
+  --awm-radius-lg: 14px;
+  --awm-hero-shadow: 0 10px 28px rgba(20, 28, 39, 0.16);
+}
+
+html.dark {
+  --awm-ink: #10161f;
+  --awm-ink-hover: #1c2531;
+  --awm-paper: #181c22;
+  --awm-surface: #20252d;
+  --awm-border: #333a44;
+  --awm-text: #e8e6e1;
+  --awm-text-secondary: #9b968c;
+
+  /* Same hue family as the light-mode values above, lightened just
+     enough to clear ~5:1 contrast against the dark card background
+     (#20252d) — the originals were tuned for a white card and dropped
+     to ~2.2–3.6:1 once the card itself correctly went dark. */
+  --awm-preview-valid: #3eaa44;
+  --awm-preview-warning: #d67f00;
+  --awm-preview-duplicate: #3e97f0;
+  --awm-preview-error: #e27272;
+
+  --awm-icon-navy: #7390b6;
+  --awm-icon-blue: #6e8fbe;
+  --awm-icon-brown: #ad894f;
+  --awm-icon-red: #d4735d;
+
+  /* Dark surfaces need a visibly darker (not lighter) shadow to read as
+     "raised" at all — same low-key intent as the light value above. */
+  --awm-shadow-card: 0 1px 2px rgba(0, 0, 0, 0.3), 0 4px 16px rgba(0, 0, 0, 0.28);
+
+  --awm-hover-tint: #262c36;
+
+  --awm-ink-deep: #080b10;
+  --awm-surface-sunken: #1b2029;
+  --awm-hero-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  font-family: 'Vazirmatn', Tahoma, 'Segoe UI', sans-serif;
+  background: var(--awm-paper);
+  color: var(--awm-text);
+  line-height: 1.6;
+}
+
+/* Codes, serial numbers, and IDs stay in Western digits and get a monospace
+   treatment — a deliberate typographic signal that this is scannable data,
+   not prose (Phase 4's "easy to find, not messy" requirement). */
+.awm-mono {
+  font-family: 'JetBrains Mono', 'Consolas', monospace;
+  direction: ltr;
+  unicode-bidi: isolate;
+}
+
+::selection {
+  background: var(--awm-accent);
+  color: #fff;
+}
+
+/* Phase 8 — every Card in the app is bordered (antd's default, never
+   overridden here), and antd only shadows *non*-bordered cards by
+   default — so without this, cards get a flat 1px outline and nothing
+   else. One subtle, consistent elevation for all of them, rather than
+   picking and choosing per screen. */
+.ant-card-bordered {
+  box-shadow: var(--awm-shadow-card);
+  transition: box-shadow 0.18s ease-out;
+}
+
+/* A themed scrollbar — Electron is always Chromium, so the WebKit
+   properties are all that's needed. Track is transparent so it doesn't
+   fight with whatever surface color it's sitting on. */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--awm-border);
+  border-radius: 6px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--awm-text-secondary);
+}
+
+/* Keyboard-focus ring, scoped to the plain elements in this app that
+   carry their own onClick and had no focus indicator at all (the
+   Dashboard's stat cards and recent-activity rows) — deliberately NOT a
+   blanket :focus-visible rule, since antd's own Input/Select/Button
+   already show their own (differently-shaped) focus treatment and a
+   second ring on top of those would just look like a mismatched double
+   outline. */
+.awm-stat-card:focus-visible,
+.awm-list-item-clickable:focus-visible {
+  outline: 2px solid var(--awm-accent);
+  outline-offset: 2px;
+}
+
+/* Fade-in for the plain centered-Spin loading state used on Asset
+   Details/Add-Edit (while the record loads) and each Reports drawer body
+   (while its data loads) — small, so it reads as a settle-in rather than
+   a flash, and skipped entirely under reduced motion. */
+@keyframes awm-fade-in-soft {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.awm-loading {
+  animation: awm-fade-in-soft 0.25s ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .awm-loading {
+    animation: none;
+  }
+}
+
+/* Hover/focus tint for the Dashboard's clickable recent-activity rows —
+   List.Item has no built-in hover treatment the way antd's Table rows
+   do, so without this, "cursor: pointer" was the only hint they're
+   clickable at all. */
+.awm-list-item-clickable {
+  cursor: pointer;
+  border-radius: 6px;
+  transition: background-color 0.15s ease-out;
+}
+
+.awm-list-item-clickable:hover,
+.awm-list-item-clickable:focus-visible {
+  background-color: var(--awm-hover-tint);
+}
+
+/* Phase 9 — icon chip used on the Dashboard's stat cards: a small
+   rounded swatch, tinted to ~10% of the status color, with the icon
+   itself in a full-strength (contrast-checked, see --awm-icon-* above)
+   version of that color. Background is set inline per-card (needs the
+   status color + alpha, which a static class can't parametrize), so
+   this class only carries the shared shape/layout. */
+.awm-icon-chip {
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 17px;
+  flex-shrink: 0;
+}
+
+/* Phase 9 — asset code / serial number "code chip" (AssetTable, and
+   anywhere else the same two fields appear) — a subtly bordered pill
+   around the existing .awm-mono treatment, so the two fields a warehouse
+   worker actually matches against a physical barcode/label stand apart
+   from ordinary text at a glance, not just by font. */
+.awm-code-chip {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 4px;
+  background: var(--awm-paper);
+  border: 1px solid var(--awm-border);
+  font-size: 12.5px;
+}
+
+html.dark .awm-code-chip {
+  background: var(--awm-hover-tint);
+}
+
+/* Subtle per-route fade/slide, applied via a remount key in AppShell so
+   it replays on every navigation without needing an animation library. */
+@keyframes awm-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.awm-page-transition {
+  animation: awm-fade-in 0.22s ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .awm-page-transition {
+    animation: none;
+  }
+}
+
+/* Dashboard stat cards that drill into a filtered Assets list — antd's
+   `hoverable` already adds the shadow transition; this just adds the
+   pointer + a small lift so it reads as clickable, not just decorative. */
+.awm-stat-card {
+  cursor: pointer;
+  transition: transform 0.15s ease-out;
+}
+
+.awm-stat-card:hover {
+  transform: translateY(-2px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .awm-stat-card {
+    transition: none;
+  }
+  .awm-stat-card:hover {
+    transform: none;
+  }
+}
+
+/* ---------------------------------------------------------------------
+   Phase 10 — Premium Visual Refinement
+   ------------------------------------------------------------------- */
+
+/* Sidebar brand block: logo mark + two-line wordmark, replacing the
+   Phase-9 plain centered text. The mark itself is a square crop of the
+   app's own icon.ico (resources/branding/sfz-mark.png) — the same
+   company logomark already used elsewhere, not a new asset. */
+.awm-sidebar-brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 18px 16px;
+}
+
+.awm-sidebar-mark {
+  width: 34px;
+  height: 34px;
+  border-radius: 9px;
+  object-fit: cover;
+  flex-shrink: 0;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.25);
+}
+
+.awm-sidebar-wordmark {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.awm-sidebar-wordmark-title {
+  color: #fff;
+  font-weight: 700;
+  font-size: 15px;
+  line-height: 1.3;
+}
+
+.awm-sidebar-wordmark-sub {
+  color: rgba(255, 255, 255, 0.45);
+  font-size: 11px;
+  line-height: 1.3;
+}
+
+/* A soft gold thread rather than a flat white hairline — ties the brand
+   block to the rest of the accent system instead of a generic divider. */
+.awm-sidebar-divider {
+  height: 1px;
+  margin: 0 16px 8px;
+  background: linear-gradient(90deg, transparent, rgba(200, 134, 43, 0.35), transparent);
+}
+
+/* Anchored to the bottom of the sidebar's flex column (see Sidebar.jsx) —
+   gives the rail a resting point instead of ending mid-air below the nav
+   items, and keeps the company name present without repeating the full
+   banner. */
+.awm-sidebar-footer {
+  margin-top: auto;
+  padding: 14px 16px;
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.32);
+  border-top: 1px solid rgba(255, 255, 255, 0.07);
+}
+
+.awm-sidebar-version {
+  margin-top: 3px;
+  color: rgba(255, 255, 255, 0.22);
+}
+
+/* Small accent rule preceding the header's app-name text — the same
+   "a color device marks the important thing" idea used on the Dashboard
+   section headers below, so the two pieces of chrome (header + content)
+   read as one visual language. */
+.awm-header-accent-bar {
+  display: inline-block;
+  width: 4px;
+  height: 18px;
+  border-radius: 2px;
+  background: var(--awm-accent);
+  margin-inline-end: 10px;
+  vertical-align: middle;
+}
+
+/* Dashboard hero card (Total Assets) — the one place the ink gradient
+   from the sidebar is deliberately echoed in the content area, so the
+   headline figure reads as the single most important number on the
+   screen rather than one card among five identical ones. */
+.awm-hero-card {
+  position: relative;
+  overflow: hidden;
+  border-radius: var(--awm-radius-lg);
+  background: linear-gradient(135deg, var(--awm-ink) 0%, var(--awm-ink-deep) 100%);
+  box-shadow: var(--awm-hero-shadow);
+}
+
+/* A thin gold edge fading out — a restrained echo of the accent color,
+   not a full band across the card. */
+.awm-hero-card::after {
+  content: '';
+  position: absolute;
+  inset-inline-start: 0;
+  bottom: 0;
+  height: 3px;
+  width: 100%;
+  background: linear-gradient(90deg, var(--awm-accent), transparent 85%);
+}
+
+.awm-hero-label {
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.64);
+}
+
+.awm-hero-figure {
+  font-size: 38px;
+  font-weight: 700;
+  line-height: 1.15;
+  color: #fff;
+}
+
+.awm-hero-icon-chip {
+  width: 50px;
+  height: 50px;
+  border-radius: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 23px;
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--awm-accent);
+  flex-shrink: 0;
+}
+
+/* Secondary stat cards: a colored edge that encodes the metric's own
+   status color (set inline per-card, same pattern as .awm-icon-chip's
+   background) — a quick-scan cue that doesn't depend on reading the
+   icon or number first. */
+.awm-metric-card {
+  border-inline-start: 3px solid var(--awm-metric-color, var(--awm-accent));
+  border-radius: var(--awm-radius-md);
+}
+
+/* Small tinted icon badge used in Card titles (Dashboard's chart/activity
+   sections, Reports) so a section header carries the same "icon + label"
+   shape as everything else, instead of plain bold text. */
+.awm-section-icon {
+  width: 26px;
+  height: 26px;
+  border-radius: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(200, 134, 43, 0.12);
+  color: var(--awm-accent);
+  font-size: 13px;
+  margin-inline-end: 8px;
+  flex-shrink: 0;
+}
+
+html.dark .awm-section-icon {
+  background: rgba(200, 134, 43, 0.18);
+}
+
+/* Assets page toolbar (search + filters) — sits on the "sunken" tone so
+   it visually reads as controls sitting a level below the data card,
+   rather than an identical white card stacked on another white card. */
+.awm-toolbar {
+  background: var(--awm-surface-sunken);
+  border: 1px solid var(--awm-border);
+  border-radius: var(--awm-radius-md);
+  padding: 12px 14px;
+}
+
+/* Import Wizard: file-selection area — same "sunken surface, dashed
+   edge" language as .awm-toolbar, with its own hover state since this
+   one *is* a real click target (opens the native file dialog). */
+.awm-import-dropzone {
+  border: 1.5px dashed var(--awm-border);
+  border-radius: var(--awm-radius-lg);
+  padding: 40px 24px;
+  text-align: center;
+  background: var(--awm-surface-sunken);
+  cursor: pointer;
+  transition: border-color 0.18s ease-out, background-color 0.18s ease-out;
+}
+
+.awm-import-dropzone:hover,
+.awm-import-dropzone:focus-visible {
+  border-color: var(--awm-accent);
+  background: var(--awm-hover-tint);
+}
+
+.awm-import-icon-chip {
+  width: 56px;
+  height: 56px;
+  border-radius: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 26px;
+  background: rgba(200, 134, 43, 0.12);
+  color: var(--awm-accent);
+  margin: 0 auto 16px;
+}
+
+html.dark .awm-import-icon-chip {
+  background: rgba(200, 134, 43, 0.18);
+}
+
+/* Import preview step: the four classification counts (valid / warning /
+   duplicate / error), each a small edge-accented panel instead of a bare
+   antd Statistic sitting in open space — same accent-bar language as
+   .awm-metric-card, color set inline per panel. */
+.awm-preview-chip {
+  border-radius: var(--awm-radius-md);
+  border: 1px solid var(--awm-border);
+  background: var(--awm-surface);
+  padding: 10px 14px 6px;
+  border-inline-start: 3px solid var(--awm-metric-color, var(--awm-border));
+  height: 100%;
+}

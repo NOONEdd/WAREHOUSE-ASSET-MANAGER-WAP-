@@ -1,0 +1,44 @@
+{
+  "name": "asset-warehouse-manager",
+  "version": "1.0.0",
+  "description": "Offline Asset & Warehouse Management System",
+  "main": "./out/main/index.js",
+  "private": true,
+  "author": "Sanat Farabar Zarin Co.",
+  "license": "UNLICENSED",
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "start": "electron-vite preview",
+    "dist": "electron-vite build && electron-builder --win",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@ant-design/icons": "^6.3.2",
+    "antd": "^6.5.2",
+    "bcryptjs": "^3.0.3",
+    "better-sqlite3": "^13.0.2",
+    "dayjs": "^1.11.21",
+    "exceljs": "^4.4.0",
+    "jalaali-js": "^2.0.0",
+    "papaparse": "^5.5.4",
+    "pdfjs-dist": "^6.2.108",
+    "qrcode": "^1.5.4",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "react-router-dom": "^7.18.2",
+    "recharts": "^3.10.1",
+    "xlsx": "^0.18.5"
+  },
+  "devDependencies": {
+    "@electron/rebuild": "^4.2.0",
+    "@vitejs/plugin-react": "^5.2.0",
+    "electron": "^43.2.0",
+    "electron-builder": "^26.15.3",
+    "electron-vite": "^5.0.0",
+    "pdfkit": "^0.19.1",
+    "vite": "^7.3.6",
+    "vitest": "^4.1.10"
+  }
+}
