@@ -66,6 +66,20 @@ describe('lookupService.listStatuses', () => {
     expect(found.isActive).toBe(true)
   })
 
+  // Phase 1A — added so the retired statusCleanup.test.js scenario "reports how
+  // many assets use a legacy status" keeps direct coverage: the existing tests
+  // here only asserted usageCount for a SOFT-DELETED asset, never for plain
+  // active ones.
+  it('reports how many assets use a custom status (active assets are counted)', () => {
+    const { itemTypeId } = seedMinimalLookups(ctx.db)
+    const user = seedUser()
+    const created = lookupService.createStatus('تعمیر', user)
+    seedAsset({ statusId: created.id, itemTypeId, assetCode: 'A-1', serialNumber: 'SN-1' })
+    seedAsset({ statusId: created.id, itemTypeId, assetCode: 'A-2', serialNumber: 'SN-2' })
+
+    expect(lookupService.listStatuses().find((s) => s.id === created.id).usageCount).toBe(2)
+  })
+
   it('counts a soft-deleted asset toward a custom status usage count too', () => {
     const { itemTypeId } = seedMinimalLookups(ctx.db)
     const user = seedUser()

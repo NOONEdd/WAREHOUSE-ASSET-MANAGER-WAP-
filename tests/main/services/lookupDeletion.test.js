@@ -112,11 +112,16 @@ describe('lookupService — bulk delete', () => {
 
 describe('lookupRepository.countUsage', () => {
   it('counts soft-deleted assets too, matching what the FK constraint actually enforces', () => {
-    const asset = seedAssetUsing()
+    // Phase 1A fix: seedAssetUsing() returns the new row id itself (a plain
+    // number), so the previous `asset.id` was undefined and softDelete()
+    // silently soft-deleted nothing — this test passed without ever
+    // exercising a soft-deleted asset.
+    const assetId = seedAssetUsing()
     const items = lookupRepository.list('itemTypes')
     expect(lookupRepository.countUsage('itemTypes', items[0].id)).toBe(1)
 
-    assetRepository.softDelete(asset.id, null)
+    assetRepository.softDelete(assetId, null)
+    expect(ctx.db.prepare('SELECT is_deleted FROM assets WHERE id = ?').get(assetId).is_deleted).toBe(1)
     expect(lookupRepository.countUsage('itemTypes', items[0].id)).toBe(1)
   })
 
