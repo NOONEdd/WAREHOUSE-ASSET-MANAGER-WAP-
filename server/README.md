@@ -18,14 +18,21 @@ the registry at the start of Phase 1B.
 
 ## Dev tooling pinned in Phase 1A (exact versions, verified on the npm registry)
 
-`typescript@6.0.3` (released 2026-04-16; the newer 7.x native-compiler major is
-deliberately not adopted yet), `vitest@4.1.10` (same as the desktop app),
-`@types/node@24.19.2`.
+- `typescript@6.0.3` — kept deliberately. TypeScript 7.0 (the native-compiler major) is not adopted: its stable
+  programmatic API is not available until 7.1, and `typescript-eslint` (needed for the planned
+  `no-floating-promises` rule) declares a peer range of `<6.1.0`. See
+  `docs/decisions/phase-1b-readiness-decision-sheet.md` (T-3).
+- `vitest@4.1.12` — bumped from 4.1.10 (the version the desktop app uses) because `npm audit` reported two
+  moderate advisories against 4.1.10 in this package; 4.1.12 has none (`npm audit`: 0 vulnerabilities) and carries a
+  provenance attestation. The root `vitest` pin is **unchanged** (needs owner approval; sheet item T-6).
+- `@types/node@24.19.2` — matches the Node 24 line.
+
+Install and run with `npm ci --ignore-scripts` (there are no install scripts to run; the flag only avoids surprises).
 
 ## Commands (Node 24 required; see `.nvmrc`)
 
 ```
 cd server
-npm ci
+npm ci --ignore-scripts
 npm run verify      # typecheck + tests
 ```
