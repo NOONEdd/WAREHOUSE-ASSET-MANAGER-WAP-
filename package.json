@@ -12,7 +12,10 @@
     "start": "electron-vite preview",
     "dist": "electron-vite build && electron-builder --win",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "verify:env": "node scripts/verify-env.mjs",
+    "verify": "npm run verify:env && npm test && npm run build",
+    "verify:audit": "npm audit --omit=dev"
   },
   "dependencies": {
     "@ant-design/icons": "^6.3.2",
@@ -40,5 +43,8 @@
     "pdfkit": "^0.19.1",
     "vite": "^7.3.6",
     "vitest": "^4.1.10"
+  },
+  "engines": {
+    "node": ">=22.13.0"
   }
 }
