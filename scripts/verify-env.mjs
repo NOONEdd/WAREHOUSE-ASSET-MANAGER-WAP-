@@ -34,7 +34,11 @@ try {
   db.prepare('SELECT 1').get()
   db.close()
 } catch (err) {
-  failures.push(`better-sqlite3 failed to load (${err.message.split('\n')[0]}). Re-run "npm ci" without --ignore-scripts.`)
+  failures.push(
+    `better-sqlite3 failed to load (${err.message.split('\n')[0]}). ` +
+      'Reinstall with "npm ci --ignore-scripts": better-sqlite3 ships prebuilt binaries, whereas a plain "npm ci" ' +
+      'runs "node-gyp rebuild", which needs Python, C++ build tools and Node headers. See docs/dev/VERIFY.md.'
+  )
 }
 
 if (failures.length > 0) {

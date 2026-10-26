@@ -15,7 +15,8 @@
     "test:watch": "vitest",
     "verify:env": "node scripts/verify-env.mjs",
     "verify": "npm run verify:env && npm test && npm run build",
-    "verify:audit": "npm audit --omit=dev"
+    "verify:audit": "npm audit --omit=dev",
+    "verify:deps": "node scripts/verify-registry-signatures.mjs package-lock.json server/package-lock.json"
   },
   "dependencies": {
     "@ant-design/icons": "^6.3.2",
