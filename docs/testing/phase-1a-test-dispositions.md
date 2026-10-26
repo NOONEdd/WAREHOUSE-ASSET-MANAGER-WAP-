@@ -1,8 +1,9 @@
 # Phase 1A — disposition of the 23 baseline test failures
 
 Baseline `efbd65a`: 552 tests, 529 passed, 23 failed (reproduced independently).
-After Phase 1A: **533 tests, 529 passed, 4 failed** (see "Count arithmetic" at the end).
-No source file under `src/` was changed. No test was weakened to obtain a pass.
+After Phase 1A closure: **533 tests, 533 passed, 0 failed** (see "Count arithmetic" at the end).
+No source file under `src/` was changed. No test was weakened to obtain a pass: every retired or replaced test is
+mapped below with the reason its old contract no longer applies.
 
 ## A. `statusCleanup.test.js` — 19 failures: retired (obsolete), with replacements
 
@@ -45,30 +46,25 @@ retired together with the file because it is duplicated three times over.
 migration audit entry; disable system-status protection; allow an inactive migration target; let `createLookup` accept
 `statuses`) and `statusManagement.test.js` failed on each. The source was restored after each run.
 
-## B. `lookupDeletion.test.js` — 4 failures: **left failing, awaiting an owner decision**
+## B. `lookupDeletion.test.js` — 4 failures: updated to the owner-approved contract (P-1, P-2, P-3)
 
-These encode the contract from *before* the Base Data Lifecycle phase (migration 004). The code
+The four tests encoded the contract from *before* the Base Data Lifecycle phase (migration 004). The code
 (`lookupService.deleteLookup` / `deleteLookupsBulk`), the Settings screen (`SettingsPage.jsx` reads
-`result.action`, `deletedCount`, `deactivatedCount`, `blocked`) and `baseDataLifecycle.test.js` (e.g. "Case B: ONLY a soft-deleted asset references it → deactivated, not blocked, not hard-deleted") all agree on
-the *new* contract. Phase 1A does not choose between them.
+`result.action`, `deletedCount`, `deactivatedCount`, `blocked`) and `baseDataLifecycle.test.js` (e.g. "Case B: ONLY a soft-deleted asset references it → deactivated, not blocked, not hard-deleted") all implement the
+*current* contract. On 2026-10-26 the owner approved that contract as intended (P-1 Option A, P-2 deactivate,
+P-3 result shapes; see `docs/decisions/phase-1a-owner-decisions.md`). No `src/` change was needed or made.
 
-| Test | Old expectation | Current code | Decision needed |
-|---|---|---|---|
-| single: "deletes a value that no asset uses" | result lacks `action` | returns `{ id, name, action: 'deleted' }` | **P-3** confirm result shape |
-| single: "refuses to delete a value only a SOFT-DELETED asset uses" | blocked with an error | **deactivates** it (FK would block a hard DELETE, so refusing left no way forward) | **P-2** confirm deactivate-instead-of-block |
-| bulk: "deletes every selected value when none are in use" | `{ count }` | `{ deletedCount, deactivatedCount, blocked[] }` | **P-3** |
-| bulk: "all-or-nothing…" | one in-use value aborts the whole batch | each row decided independently; in-use rows are left alone, others still change | **P-1** partial vs all-or-nothing |
+| # | Old test (baseline) | Disposition | New test / assertion | Why the old contract no longer applies |
+|---|---|---|---|---|
+| 1 | "deletes a value that no asset uses" — expected result `{ id, name }` | **Updated** (same title) | expects `{ id, name, action: 'deleted' }` | P-3. Since migration 004 the result names the outcome so callers can tell a hard delete from a deactivation; the Settings screen reads `result.action`. |
+| 2 | "refuses to delete a value only a SOFT-DELETED asset uses — matches the database FK…" — expected a thrown error | **Replaced** | "deactivates a value only a SOFT-DELETED asset uses, preserving the historical reference" | P-2. A hard DELETE is impossible (the FK ignores `is_deleted`), so refusing left the value permanently undeletable; the approved behavior is deactivation. The new test first asserts the soft-delete really happened (`is_deleted = 1`), that `countUsage` is 1 and `countActiveUsage` is 0, then asserts `{ action: 'deactivated', historicalUsage: 1 }`, that the row still exists with `is_active = 0`, and that the soft-deleted asset still points at it. Related: BDL "Case B…" and "a genuine raw-SQL hard DELETE would actually fail on Case B…". |
+| 3 | "deletes every selected value when none are in use" — expected `{ count: 2 }` | **Updated** (same title) | expects `{ deletedCount: 2, deactivatedCount: 0, blocked: [] }` | P-3. Bulk results report per-outcome counts plus the blocked list. |
+| 4 | "is all-or-nothing: if even one selected value is in use, NOTHING is deleted" | **Replaced** (contract reversed) | "processes each selected value independently: an in-use value is reported as blocked and left untouched, the others still proceed" | P-1 Option A. The all-or-nothing rule is superseded: an in-use value must not stop unrelated eligible rows. The new test asserts the exact result (`deletedCount: 1`, `blocked: [{ id, name, activeUsage: 1 }]`), that the eligible row was deleted, and that the blocked row still exists and is active. Related BDL tests: "A (unused) is hard-deleted, B (historical-only) is deactivated, C (active) is protected — all in the same call", "one blocked record does not prevent a different, safe record in the same selection from being processed", "is transactional: every delete/deactivate in the plan either all apply or none do". |
 
-**Decisions requested**
-
-- **P-1 Bulk deletion of base data (item types / workshops / countries):** (A) per-row outcomes — *current behavior*, one in-use value never blocks the others, the UI reports exactly what happened; or (B) all-or-nothing — one in-use value rejects the whole batch.
-  My recommendation: **A** (already shipped, already what the Settings UI renders, avoids "one stray value blocks cleanup of fifty"). B would need a service change, a UI change and rewriting `baseDataLifecycle.test.js` — a separate authorized change, not a test edit.
-- **P-2 Value referenced only by soft-deleted assets:** deactivate (current) or refuse. Recommendation: **deactivate**.
-- **P-3 Result shapes** (`action`, `deletedCount`, `deactivatedCount`, `blocked`): confirm as the contract. Recommendation: confirm.
-
-**If A + deactivate + shapes are approved,** the follow-up is test-only: update the 3 single/shape assertions to the current
-contract and retire the all-or-nothing test with a mapping to `baseDataLifecycle.test.js` ("one blocked record does not
-prevent…" and the transaction test). If B is chosen, that is a behavior change and needs its own authorization.
+**Evidence the updated tests are not decorative.** Five mutations were applied one at a time to `lookupService.js`
+(drop `action` from the hard-delete result; block instead of deactivate when only soft-deleted assets reference a
+value; make "deactivate" a no-op; make bulk all-or-nothing again; drop `blocked[]` from the bulk result). Each made exactly
+one `lookupDeletion.test.js` test fail, and the source was restored after each run (`git status` showed no `src/` change).
 
 ## C. Vacuous tests found while reviewing
 
@@ -78,12 +74,13 @@ returned by `seedAssetUsing()` — so `asset.id` was `undefined` and nothing was
 1. "counts soft-deleted assets too, matching what the FK constraint actually enforces" **passed without ever
    soft-deleting an asset**. Fixed in Phase 1A (uses the id, and now asserts `is_deleted = 1`); with the fix, making
    `countUsage` ignore soft-deleted rows makes it fail, which it did not before.
-2. The SOFT-DELETED single-delete test above has the same setup defect, and its current failure message ("…فعال استفاده می‌شود")
-   is partly an artifact of it. **Not changed here** because that test is part of decision P-2; fix its setup when it is updated.
+2. The SOFT-DELETED single-delete test had the same setup defect. It was replaced as part of P-2 (row 2 above); its setup now
+   asserts `is_deleted = 1` before exercising the behavior.
 
 A broader vacuity review (fault-injection of the security-critical tests) is a Phase 1B task, when those tests exist.
 
 ## Count arithmetic
 
-552 baseline − 20 retired (`statusCleanup`: 19 failing + 1 passing) + 1 added (SM active-usage test) = **533**;
-529 passed − 1 retired passing test + 1 added passing test = **529**; 23 − 19 = **4 failing**.
+552 baseline − 20 retired (`statusCleanup`: 19 failing + 1 passing) + 1 added (SM active-usage test) = **533** tests.
+Passing: 529 baseline − 1 retired passing test + 1 added + 4 updated/replaced `lookupDeletion` tests (previously failing) = **533**.
+Failing: 23 − 19 (retired) − 4 (updated) = **0**. The `lookupDeletion` count is unchanged at 11 tests (2 updated in place, 2 replaced one-for-one).
