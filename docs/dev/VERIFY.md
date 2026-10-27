@@ -95,7 +95,8 @@ If a Windows result differs from the table, treat it as new evidence to investig
 
 `npm run verify:audit` (`npm audit --omit=dev`) is **not** part of `verify`: it needs the network and currently
 reports known findings (e.g. `xlsx@0.18.5`, no fixed version on npm). It becomes a gate once decision D-15
-(xlsx handling) is made. Registry-signature verification of the lockfiles is a separate, reproducible
+(xlsx handling) is made for the desktop — its server-side part was decided on 2026-10-27; its desktop scope is still
+open (decision register). Registry-signature verification of the lockfiles is a separate, reproducible
 procedure: see [`DEPENDENCY_VERIFICATION.md`](DEPENDENCY_VERIFICATION.md).
 
 ## Server

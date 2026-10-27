@@ -65,7 +65,7 @@ run of the built server as real processes.
 | 8.2.2, 8.4.1 | Data-level access (IDOR/BOLA); cross-tenant (warehouse) control | warehouse permission per URL warehouse; 404 otherwise | **Done for access data and audit** — int/adminApi, mutation. **Assets: Planned 1B-3/1B-4** |
 | 8.2.3 | Field-level access (BOPLA) | strict request/response schemas; `is_owner` not writable via API or by `wam_app` | **Done** — int/adminApi (mass assignment), int/schema |
 | 8.3.1 | Enforced at a trusted service layer | server only; UI visibility is never a control | **Done** |
-| — | Privilege escalation rules A1–A6 | `admin/rules.ts`, services | **Done** — int/adminApi (each rule paired with an owner success), mutation |
+| — | Privilege escalation rules A1–A7 (A7: enrol first, then appoint — O-12) | `admin/rules.ts`, services; A7 also in the database (migration 0004) | **Done** — int/adminApi (each rule paired with an owner success), int/mfa (A7: API, sessions, concurrency, database), int/migrations, mutation |
 | — | Row-level security as defense in depth | — | **Planned 1B-4** (decision E-12) |
 
 ## Request forgery, headers, data protection (V3.4, V3.5, V14)
@@ -116,7 +116,9 @@ run of the built server as real processes.
 
 | ASVS | Requirement | Status |
 |---|---|---|
-| 5.2.x, 5.3.x | File upload size, type, archive and path handling | **Planned 1B-3** (imports; decision D-15) |
+| 5.1.1, 5.2.1–5.2.3, 5.3.2, 5.3.3 | File types, size and unpacked size documented and enforced; archive checks before unpacking; no user-supplied paths | **Planned 1B-3** — designed in the D-15 review §4 (4.2–4.4, 4.13); decision D-15 (server) |
+| 15.1.1, 15.1.2, 15.2.1 | Remediation time frames; component inventory; components within time frames | **Partial** — server dependencies pinned with a lockfile, `npm audit` 0; time frames proposed (E-18); no SBOM file yet. Desktop dependencies outside this scope (T-6, D-15 desktop scope) |
+| 15.1.3, 15.2.2, 15.1.4, 15.2.5 | Resource-demanding functionality and risky components documented and contained | **Planned 1B-3** — spreadsheet parsing documented as resource-demanding and ExcelJS as a risky component; isolated worker with limits (D-15 review §3.1, §4.1, §4.5) |
 | 12.x | TLS 1.2+/1.3, trusted certificates | **Planned 1E** |
 | 14.x | Encrypted backups, restore drill | **Planned 1D** (decision O-08) |
 | — | Spreadsheet/CSV formula injection on export | **Planned 1C** |
