@@ -6,6 +6,8 @@ or implemented.** Phase 1B has not been started and needs separate explicit auth
 > **Update 2026-10-27:** the current status of every decision below is kept in
 > [`decision-register.md`](decision-register.md); this sheet remains the detailed analysis as of 2026-10-26.
 > Phase 1B-1 has since been authorized and implemented; D-08 no longer blocks it (see `../STATUS.md`).
+> **D-05 below is superseded:** the owner decided an online-only application with **no** paper-based or offline
+> workflow (register, section 1). D-01 is settled at design level by decision O-09.
 
 Labels used: **[V]** verified by me with a command or an official page, **[P]** Phase 0 report statement (not re-verified),
 **[R]** my recommendation, **[U]** unknown / unverified.

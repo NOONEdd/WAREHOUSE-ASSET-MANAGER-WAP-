@@ -22,7 +22,7 @@ shorten the project.
 | Week | Slice | Effort (est.) | Needs | Acceptance criteria |
 |---|---|---|---|---|
 | 1 | **Owner:** push approval (O-01), tag (O-02), D-01, D-05; WSL2 checks (sheet T-5); start D-02/D-03 | owner time | — | Branch on GitHub; tag published; answers recorded in the register |
-| 1–2 | **1B-2** users, roles, permission catalogue, warehouses (synthetic names), Owner bootstrap CLI, login, sessions, audit events | 5–7 days | O-05, D-01, D-05 | Negative tests: no unauthenticated setup; revoked/expired sessions refused; user of warehouse A cannot read B; throttling works; audit append-only |
+| 1–2 | **1B-2** users, configurable permission profiles and job titles, warehouses (synthetic names), owner CLI, login, sessions, audit events, idempotent admin API; then **1B-2c** MFA | 5–7 days + 2–3 days | settled (O-05, O-09, D-01, D-05); O-07 for MFA scope | Negative tests: no unauthenticated setup; revoked/expired sessions refused; user of warehouse A cannot read B; throttling works; audit append-only |
 | 2 | **Desktop maintenance** (only if O-03/O-04 approved): import fix + Electron update | 2–3 days | O-03, O-04, Windows check by you | 533+ tests pass; new regression tests for blank-cell and status-history cases; `verify` passes on Windows |
 | 2–3 | **1B-3** asset schema, status history, provenance, staged import with preview, SQLite → PostgreSQL rehearsal on **synthetic** data; then on a **copy** of the real database on your PC | 5–7 days | O-06, D-15 | Row counts reconcile; blank cells never erase; duplicates reported, not merged; re-running an import changes nothing |
 | 3–4 | **1B-4** isolation and API security suite across every endpoint; RLS decision | 3–4 days | 1B-2, 1B-3 | Every route declares a permission; adversarial cross-warehouse tests on get/list/search/count/export/import/audit pass |
@@ -32,12 +32,15 @@ shorten the project.
 
 Login and sessions; user and role administration; warehouses; warehouse-scoped asset list, search, view, create,
 edit and status change with full history; transfers (as decided in D-06); audit-log view; staged import with
-preview and reconciliation; export; encrypted backups with a **tested** restore; paper fallback for outages.
+preview and reconciliation; export; encrypted backups with a **tested** restore; online-only operation with
+idempotent retries and clear "not saved" feedback (D-05); MFA for at least the owner and administrators (O-07).
 
 ## Deferrable without weakening security or data integrity
 
-Offline synchronization (D-05), approval workflows beyond the D-06 minimum, attachments, PDF report parity, QR
-printing, dashboards beyond basic counts, e-mail notifications, self-service password reset.
+Approval workflows beyond the D-06 minimum, attachments, PDF report parity, QR printing, dashboards beyond basic
+counts, e-mail notifications, self-service password reset.
+
+**Out of scope (not deferred):** offline operation, offline synchronization and paper-based workflows (D-05).
 
 ## Unlikely to fit in the first month
 

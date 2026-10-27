@@ -56,24 +56,25 @@ role or a schema/code mismatch. To follow: real foreign keys and `CHECK` constra
 transaction-local context (`set_config(…, true)` inside the request's transaction) and tests proving it does
 not leak between pooled connections; application checks remain the primary control.
 
-### 2.4 Authentication and sessions [R, for 1B-2]
-Owner bootstrap and recovery by server CLI only (D-01). Argon2id password hashing via Node's built-in
-`crypto.argon2` — no native add-on needed (present in Node 24.22.1, absent in Node 22 [V]; parameters to be
-benchmarked on the target hardware). Opaque random session tokens stored
-**hashed** in PostgreSQL; cookie `HttpOnly; Secure; SameSite=Strict; Path=/`; idle and absolute timeouts;
-all sessions revoked on deactivation, role change or password change. CSRF: SameSite=Strict plus an `Origin`
-check on every state-changing request. Login throttling per account and per source address, stored in
-PostgreSQL. No self-service password reset by e-mail in R1 (an administrator resets; the Owner resets via
-CLI). MFA (TOTP) for Administrator accounts before the system is reachable from the internet (decision O-07).
-Desktop password hashes are **not** migrated: web accounts are issued fresh.
+### 2.4 Authentication and sessions [specified 2026-10-27; implemented from 1B-2]
+The binding rules are in [`../security/identity-and-access.md`](../security/identity-and-access.md) §1, §3–§5,
+written against the ASVS 5.0.0 requirement text. In short: owner bootstrap and recovery only through the server-side
+owner CLI with the separately held migration credentials (decision O-09); Argon2id via Node's built-in
+`crypto.argon2` (present in Node 24.22.1, absent in Node 22 [V]); 15-character minimum and an offline
+common-password list; one-time setup codes instead of administrator-chosen passwords; hashed reference-token
+sessions in a `__Host-` cookie with idle and absolute timeouts; a required anti-forgery header plus `Origin` checks;
+throttling that cannot permanently lock an account. **MFA is required for ASVS Level 2 (V6.3.3)** and is the next
+slice after the core (decision O-07). Desktop password hashes are **not** migrated: web accounts are issued fresh.
 
-### 2.5 Authorization and warehouse isolation [R, for 1B-2/1B-4]
-Permissions are named actions (e.g. `asset.read`, `asset.update`, `asset.transfer.request`, `user.manage`),
-granted to roles; a user's role applies **per warehouse** (a manager of A may be read-only in B). Every service
-call checks the action and resolves the warehouse scope server-side; every repository query filters by that
-scope — including counts, search, export, import targets and audit-log reads. Deny by default; client-supplied
-role or warehouse values are never trusted. An object outside the caller's scope answers **404**, not 403,
-so existence is not revealed. Tested adversarially (1B-4): direct IDs, search, counts, exports, concurrency.
+### 2.5 Authorization and warehouse isolation [specified 2026-10-27; implemented from 1B-2]
+The owner configures access in the admin panel (decision O-09): code-defined **permissions**, owner-configurable
+**permission profiles**, descriptive **job titles** that grant nothing, and explicit per-warehouse **assignments**
+(no "all warehouses" grant). Escalation rules A1–A6 keep administrators from appointing administrators, acting
+on each other, or granting themselves access. Full model: identity-and-access §2. Every service call checks the
+action and resolves the warehouse scope server-side; every repository query filters by that scope — including
+counts, search, export, import targets and audit-log reads. Deny by default; client-supplied role or warehouse
+values are never trusted. An object outside the caller's scope answers **404**, not 403, so existence is not
+revealed. Tested adversarially as each data type arrives (1B-2 for access data and audit, 1B-4 for assets).
 
 ### 2.6 Audit and business operations [R]
 Append-only audit table: `wam_app` gets `INSERT, SELECT` only, never `UPDATE/DELETE`, plus a trigger that
@@ -92,12 +93,16 @@ and per-record checks between source and destination. Real company data only aft
 A single VPS is a single point of failure; the proportionate mitigation for R1 is **tested restores**, not
 high availability: nightly encrypted `pg_dump` copied off the server plus WAL archiving if a recovery point
 under 24 h is required (owner to set RPO/RTO), a documented rebuild procedure, and a restore drill whose time is
-measured. Monitoring: `/health/ready`, disk space, backup age, certificate expiry. Outages: paper fallback (D-05).
+measured. Monitoring: `/health/ready`, disk space, backup age, certificate expiry. **Outages:** the application
+is online-only (decision D-05) — there is no offline mode and no paper workflow in the product — so work in the
+system stops during an outage. That makes availability, monitoring, backups and a measured restore the controls,
+and the recovery objectives (O-08) the business commitment.
 
-### 2.9 Security baseline [X]
-OWASP ASVS **5.0.0** (May 2025) appears to be the current release, based on web-search results only: owasp.org
-could not be reached from this sandbox, so the standard's text was not read. Level 2 is the recommended target.
-Requirement-level mapping is pending access to the standard; the matrix currently maps to chapters.
+### 2.9 Security baseline [V]
+OWASP ASVS **5.0.0** (May 2025) is the latest stable release — verified 2026-10-27 from the OWASP/ASVS repository
+README ("Latest Stable Version - 5.0.0"; next target 5.0.1, unreleased). The requirement text was read from the
+official `v5.0.0` CSV (345 requirements; SHA-256 `98c8fe911b9edb403af8ee05d3ce8201ecac2659e313b053890a62847cdcf680`).
+Target: Level 2. The security matrix maps rows to requirement IDs in the `v5.0.0-<id>` form the standard recommends.
 
 ## 3. Engineering decisions taken (reversible, within engineering authority)
 

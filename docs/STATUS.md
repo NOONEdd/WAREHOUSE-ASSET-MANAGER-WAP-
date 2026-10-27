@@ -9,7 +9,7 @@ Snapshot: **2026-10-27**. Replace this file's contents at the end of each work s
 | `main` | `efbd65a9ca123c1ac03d464087628097671a0290` | yes (unchanged) | Desktop baseline |
 | tag `desktop-baseline-efbd65a` | tag object `6dd8a5dd58b3d43e78abdfe2113128b9947bf6b5` → `efbd65a9…` | **no** — push refused (HTTP 403) by this session's permissions; see [owner actions](#owner-actions) | Protects the baseline |
 | `phase-1a/repo-safety-net` | `c819994e80cfdc0262677b0e359eb14a5b9765cc` | **yes**, verified with `git ls-remote` | Phase 1A, imported from `WAM_Phase1A_closure.bundle` |
-| `ccr-1860034b-yp0csr` (session branch) | GitHub: `c819994e…`; locally 2 more commits | **partly** — the two new commits await your push approval (O-01) | Phase 1A + Phase 1B-1 server foundation + these documents |
+| `ccr-1860034b-yp0csr` (session branch) | `eeb25fea8448c400b42c6d2f6f0700e19e47f5f4` | **yes** — pushed with your approval (O-01), verified with `git ls-remote` | Phase 1A + Phase 1B-1 server foundation + these documents |
 
 How Phase 1A reached GitHub: this session may push only to its session branch, so the verified Phase 1A commits
 were pushed there (a fast-forward, no force), and `phase-1a/repo-safety-net` was created on GitHub from it via
@@ -50,8 +50,7 @@ Phase 1B-2 onward; any desktop change; anything on Windows; PostgreSQL 17 testin
 
 ## Owner actions
 
-1. **Approve the push** of the session branch (O-01). Until then the new work exists only in this temporary
-   container and in the Git bundle sent to you.
+1. ~~Approve the push (O-01)~~ — done 2026-10-27.
 2. **Publish the baseline tag** (O-02). On your PC, in the repository folder, with the original
    `WAM_Phase1A_closure.bundle` (changes your local Git and adds one tag on GitHub; touches nothing else):
    ```
