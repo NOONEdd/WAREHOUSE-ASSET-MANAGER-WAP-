@@ -1,6 +1,6 @@
 # Decision register (living document)
 
-Last updated: 2026-10-27 (third session). **This file is the single place for the current status of every
+Last updated: 2026-10-27 (third session, after the second push). **This file is the single place for the current status of every
 decision.** Detailed analysis stays where it was written; this register links to it instead of copying it:
 
 - D-01…D-09, T-1…T-7: [`phase-1b-readiness-decision-sheet.md`](phase-1b-readiness-decision-sheet.md) (2026-10-26 analysis; its D-05 text is superseded below)
@@ -19,8 +19,10 @@ New owner decisions use the prefix **O-** so they cannot collide with the Phase 
 | **D-01** | Owner bootstrap and recovery — **settled at design level by O-09**: owner created and recovered only by the server-side owner CLI using the separately held migration credentials; break-glass is an operational two-person control over those credentials (identity-and-access §1). The identities of the owner and any custodians stay in a private record, never in this repository. | 2026-10-27 | No longer blocks 1B-2. |
 | **O-01** | Push of the Phase 1B-1 work | 2026-10-27 | Pushed: `ccr-1860034b-yp0csr` = `eeb25fe` on GitHub (verified). |
 | **O-05** | Proceed with Phase 1B-2 (identity, permissions, warehouses, sessions, audit) | 2026-10-27 | Authorized by the owner's continuation instructions, within their safety rules (no push, merge or tag without separate approval). **Delivered:** 1B-2a (`b7632d3`), 1B-2b (`fd0a5dc`), 1B-2c MFA (`742d273`, local). |
-| **O-10** | Push of this session's commits to the session branch | 2026-10-27 | Conditional approval, conditions checked before pushing: exactly the five commits `28c9fcd`, `b7632d3`, `fd0a5dc`, `fc53b1a`, `1463f63`; remote head `eeb25fe` an ancestor (fast-forward, nothing on GitHub overwritten); only `server/` and `docs/` changed; normal push, no force. **Pushed and verified:** GitHub branch `ccr-1860034b-yp0csr` = `1463f63`; `main` and `phase-1a/repo-safety-net` unchanged. The bundle backup is kept. Further pushes need a new approval. |
+| **O-10** | Pushes of this session's commits to the session branch (two separate conditional approvals) | 2026-10-27 | Each time the conditions were checked first: exact commits, ancestry (fast-forward, nothing on GitHub overwritten), destination branch, only `server/` and `docs/` changed, no secrets; normal push, no force. **1st:** `28c9fcd`…`1463f63` (five commits). **2nd:** `0c65acf`, `742d273`, `568846b`. Both verified on GitHub (branch = `568846b`); `main` and `phase-1a/repo-safety-net` unchanged; bundle backups kept. Any later commit (for example `1724a7a`) needs a new approval. |
 | **O-07** | **Multi-factor authentication:** required for the owner and every administrator, never optional for privileged accounts. The design must also let all staff be required to use it through a configurable security policy. Recovery and account-lockout safeguards are documented before implementation. | 2026-10-27 | Design: identity-and-access §3.2 (written before the code, `0c65acf`). **Implemented and verified:** `742d273` (local; results in [`../STATUS.md`](../STATUS.md)). Policy values are `privileged` (the minimum, enforced by the database) and `all_users`; see O-11 for when to switch. |
+| **O-11** | **MFA for all staff before any public internet exposure.** Until that requirement is implemented, verified and recovery-tested, the server stays restricted to a trusted network. MFA stays mandatory for the owner and every administrator at all times. | 2026-10-27 | Deployment gate (Phase 1E): switch the policy to `all_users`, verify sign-in for every role, and test the recovery paths of identity-and-access §3.2.5 before exposure. The mechanism exists (`742d273`); switching it on is part of that gate. |
+| **O-07 follow-up** | MFA security requirements: (1) keep `WAM_MFA_ENCRYPTION_KEY` separate from the database and back it up securely; (2) before production deployment, document **and test** a safe key-rotation and recovery procedure; (3) owner recovery only through a trusted, authorized server-side procedure, never through a public endpoint; (4) initial enrolment and administrator appointment follow the documented safeguards. | 2026-10-27 | (1) documented (server README, identity-and-access §3.2.5). (2) **deployment gate**, Phase 1E (limitation L-8). (3) **verified:** the owner CLI is unreachable from web code, ownership is not writable by the server role, the CLI refuses the server's credentials — and **one gap found and closed** (`1724a7a`): an owner *session* could reset the owner's own password and authenticator over HTTP; now refused for everyone, tested, and the test catches the check's removal. (4) **verified** for every enforced safeguard (tests in `tests/integration/mfa.test.ts`); "appoint administrators only after they enrolled" is a recommendation that is not enforced — see O-12. |
 | **O-02** | Baseline tag publication stays a **separate task you run locally**. I perform no tag operation, local or remote, without your explicit approval. | 2026-10-27 | Still pending on your side: commands in [`../STATUS.md`](../STATUS.md#owner-actions). |
 | **O-03 (interim rule)** | Until the desktop import defect is fixed **and verified**, users choose **Skip**, never **Update**, for duplicate records. | 2026-10-27 | Applies to staff now. The fix itself is still awaiting approval (section 2). |
 | P-1…P-3 | Base-data deletion contract | 2026-10-26 | Unchanged |
@@ -29,6 +31,7 @@ New owner decisions use the prefix **O-** so they cannot collide with the Phase 
 
 | ID | Decision | Recommended default | Blocks |
 |---|---|---|---|
+| **O-12** | Enforce the order **enrol first, then appoint**: assigning a system (administrator) profile is refused until the user has an authenticator enrolled. | Enforce. Without it, the first sign-in after an appointment enrols whatever authenticator the person holding the password presents; with it, you can watch the enrolment (audited, shown in the user list) before granting rights. Small change with tests. | Hardening of administrator appointment |
 | **O-03** | Fix the desktop import data-loss defect (review F-3) as a separate desktop task. Interim rule settled above (Skip, never Update). | Approve | Desktop data integrity now |
 | **O-04** | Update the desktop app's Electron 43.2.0 → latest 43.x (≥ 43.8.1), verified on Windows (review F-4). | Approve, together with developer-tool updates (T-6) | Desktop security now |
 | **O-06** | Read-only data-quality report on a **copy** of the real desktop database on your PC. | Approve | 1B-3 schema design |
@@ -36,7 +39,7 @@ New owner decisions use the prefix **O-** so they cannot collide with the Phase 
 | D-03 | Source of truth and reviewer for asset → warehouse mapping | Everything starts `UNASSIGNED`; audited bulk assignment; never inferred | 1B-3 real data, pilot |
 | D-06 | Which actions need approval (registration, retirement, transfer) | Registration approved by a same-warehouse holder of `asset.approve` (never self); retirement and transfer likewise, with a reason | 1B-5 |
 | D-08 | Local PostgreSQL on your PC (WSL2) — for running the tests yourself and for the real-data rehearsal | WSL2 with Debian or Ubuntu; read-only checks in sheet T-5 first | Your own verification; 1B-3 rehearsal |
-| D-15 | Spreadsheet parsing on the server (review F-5) | Never `xlsx@0.18.5` on the server; ExcelJS for `.xlsx` or CSV | 1B-3 import |
+| D-15 | Spreadsheet parsing on the server (review F-5). **Provenance:** a Phase 0 item whose original text is not in this repository; earlier documents call it "D-15 (`xlsx` handling)" in the context of the **desktop** dependency (`dev/VERIFY.md`; readiness sheet T-6). The wording "on the server" is my narrowing from the first session — please confirm the scope. | Never `xlsx@0.18.5` on the server; ExcelJS for `.xlsx` plus a strict CSV parser, in an isolated worker with hard limits; desktop `xlsx` replacement as a separate approved desktop task | 1B-3 import |
 | T-2 | Server Node line 24 (maintenance, EOL 2028-04-30) or 26 (LTS from 2026-10-28, EOL 2029-04-30) | 24 now; re-test on 26 and decide before the pilot | Pilot |
 
 ## 3. Engineering defaults (you may override; each is an ASVS-based choice)
@@ -58,7 +61,6 @@ New owner decisions use the prefix **O-** so they cannot collide with the Phase 
 
 | ID | Decision | Recommended default |
 |---|---|---|
-| **O-11** | When to set the MFA policy to **all staff** | Before any exposure beyond the trusted network (ASVS V6.3.3 Level 2 expects every user to have MFA); the owner switches it in the admin panel |
 | D-04 | Concurrent users and sites with unreliable internet | Size and load-test for 100 concurrent sessions; please confirm the real number |
 | D-07 | Trial VPS | **Not authorized** |
 | D-09 | Domain and DNS ownership | Tell me what exists; nothing to buy now |

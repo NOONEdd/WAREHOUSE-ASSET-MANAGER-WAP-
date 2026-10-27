@@ -1,6 +1,6 @@
 # Project status
 
-Snapshot: **2026-10-27, third session**. Replace this file's contents at the end of each work session; history
+Snapshot: **2026-10-27, third session** (after the second push). Replace this file's contents at the end of each work session; history
 stays in Git.
 
 ## Where things are
@@ -10,22 +10,26 @@ stays in Git.
 | `main` | `efbd65a9ca123c1ac03d464087628097671a0290` | yes (unchanged) | Desktop baseline |
 | tag `desktop-baseline-efbd65a` | tag object `6dd8a5dd58b3d43e78abdfe2113128b9947bf6b5` → `efbd65a9…` | **no** — a separate task you run locally (O-02); see [owner actions](#owner-actions) | Protects the baseline |
 | `phase-1a/repo-safety-net` | `c819994e80cfdc0262677b0e359eb14a5b9765cc` | yes | Phase 1A |
-| `ccr-1860034b-yp0csr` (session branch) | GitHub: `1463f63` (pushed under O-10, verified). **Locally ahead by the commits below** | up to `1463f63` | Phase 1B-1, 1B-2; 1B-2c locally |
+| `ccr-1860034b-yp0csr` (session branch) | GitHub: `568846b` (second push under O-10, verified). **Locally ahead by the commits below** | up to `568846b` | Phase 1B-1, 1B-2 including MFA (1B-2c) |
 
-Commits of this session, **local only** — pushing them needs a new approval:
+Pushed under O-10 (second approval; fast-forward from `1463f63`, no force, verified on GitHub): `0c65acf` (decisions
+and MFA design), `742d273` (MFA), `568846b` (verified result).
+
+**Local only** — pushing them needs a new approval:
 
 | Commit | Content |
 |---|---|
-| `0c65acf` | Decisions O-10, O-07, O-02 and the desktop import rule recorded; MFA design with recovery and lockout safeguards (identity-and-access §3.2), written before the code |
-| `742d273` | Phase 1B-2c: multi-factor authentication (the code, its tests, and the spec correction that goes with it) |
-| the commit containing this file | Documentation of the verified result |
+| `1724a7a` | Fix: the owner account can no longer be reset over HTTP, not even by an owner session (found while checking your requirement that owner recovery is server-side only) |
+| the commit containing this file | Decisions O-10 (second push), O-11, the O-07 follow-up requirements and O-12 recorded; this status |
 
 Nothing was merged into `main`, tagged, released or deployed. No desktop file changed (verified with `git diff`).
 
 ## Current phase
 
-**Phase 1B-2 (identity and access) is complete on the server side, including MFA.** Next: **1B-3** (asset schema,
-status history, staged import, SQLite → PostgreSQL rehearsal on synthetic data), which needs O-06 and D-15.
+**Phase 1B-2 (identity and access) is complete on the server side, including MFA.** Next would be **1B-3** (asset
+schema, status history, staged import, SQLite → PostgreSQL rehearsal). **Not started, by your instruction:** it waits
+for decisions O-06 and D-15 (reported with options and recommendations; D-15's original scope also needs your
+confirmation).
 
 What 1B-2c delivers (decision O-07; `security/identity-and-access.md` §3.2):
 
@@ -45,6 +49,8 @@ What 1B-2c delivers (decision O-07; `security/identity-and-access.md` §3.2):
 | Check | Result |
 |---|---|
 | Fresh clone of `742d273`, `npm ci --ignore-scripts`, `npm run verify` (typecheck, lint `strictTypeChecked`, tests, build), Node 24.22.1, PostgreSQL 16.15, non-root user | **exit 0**; **312/312** tests (unit 145 in 7 files, integration 167 in 10 files); lockfile unchanged |
+| Owner recovery is server-side only (O-07 follow-up) | Owner CLI not reachable from web code; ownership not writable by the server's database role; CLI refuses the server's credentials. **Gap found and closed (`1724a7a`):** an owner session could reset the owner's own password and authenticator over HTTP (probe: `200` with a new setup code). Now `403` for everyone; test added; removing either check is caught. Fresh clone of `1724a7a`: `verify` exit 0, **313/313** |
+| Enrolment and appointment safeguards (O-07 follow-up) | Every enforced safeguard has a test (no session without the second step; administrator rights never usable from a password-only session; activation only with a code from the app; enrolment audited and visible; resets always include a new password; sign-in enrolment never overwrites). Not enforced: "appoint only after enrolment" — decision O-12 |
 | RFC conformance | HOTP (RFC 4226 Appendix D) and TOTP (RFC 6238 Appendix B) published test vectors reproduced |
 | Deliberate-defect check: 70 safeguards removed one at a time — the 30 from 1B-2 and 40 MFA safeguards (enforcement on every request, owner/administrator rule, fail-closed policy, single use of codes, lock and its recovery paths, challenge expiry and single use, re-authentication, reset rules, owner-only policy, database grants and `CHECK`, encryption binding, audit guard, …) | **70/70 caught** in one run against the fresh clone of `742d273`; source restored byte-identical. (An earlier run during development left 3 survivors; each led to a new test, and one to a code fix: a second-step challenge now completes at most one sign-in even under concurrent requests.) |
 | End-to-end runbook with the **built** server as real processes: refuses to start without the MFA key → migrate → owner bootstrap → setup code → password step (no session, second-step cookie only) → enrol (wrong code refused, right code → session + 10 recovery codes) → `/api/me` → create warehouse → sign in again with a recovery code → same code refused → owner `status` shows MFA | all as expected; **no password, setup code, session or second-step token, authenticator secret, recovery code or encryption key in the server log** |
@@ -73,21 +79,22 @@ asset queries (do not exist yet), the D-04 concurrency figure (unconfirmed).
 
 ## Known limitations (details: `security/identity-and-access.md` §3.2.6 and §8)
 
-1. **MFA covers ordinary staff only after the owner switches the policy to `all_users` (O-11).** Until then, do not
-   expose the server beyond a trusted network (ASVS V6.3.3 Level 2 expects MFA for every user).
+1. **Trusted network only (decision O-11).** MFA for all staff is required before any public internet exposure;
+   until the policy is switched to `all_users`, verified and recovery-tested, the server stays on a trusted network.
 2. **Deployment blocker:** behind a reverse proxy, `trustProxy` must be set to the proxy's address, or all users
    share one address for throttling.
 3. A user's **first** enrolment trusts the password at that moment; appoint administrators after they have enrolled.
    TOTP is not phishing-resistant (L-9).
-4. No rotation command for `WAM_MFA_ENCRYPTION_KEY` yet (L-8, Phase 1E); losing the key means resetting every
-   enrolled user.
+4. No rotation command for `WAM_MFA_ENCRYPTION_KEY` yet (L-8). **Your requirement:** a key-rotation and recovery
+   procedure is documented and tested before production deployment. Keep the key separate from the database and
+   backed up securely; losing it means resetting every enrolled user.
 5. No breached-password check (offline list only); no general rate limit yet; audit trail not yet shipped off the
    server.
 
 ## Owner actions
 
-1. **Push approval** for `0c65acf`, `742d273` and the docs commit above, if you want them on GitHub (the container is
-   temporary; a bundle backup is provided).
+1. **Push approval** for `1724a7a` and the docs commit above, if you want them on GitHub (a bundle backup is
+   provided).
 2. **Publish the baseline tag (O-02)** — a separate task you run locally; I perform no tag operation. On your PC, in
    the repository folder, with `WAM_Phase1A_closure.bundle` (changes your local Git and adds one tag on GitHub;
    nothing else):
@@ -101,7 +108,7 @@ asset queries (do not exist yet), the D-04 concurrency figure (unconfirmed).
 3. **Staff rule until O-03 is fixed and verified:** in the desktop import screen choose **Skip**, never **Update**,
    for duplicate records.
 4. For 1B-3: **O-06** (read-only data-quality report on a copy of the desktop database, on your PC) and **D-15**
-   (spreadsheet parsing on the server).
-5. When you can: O-03 and O-04 (desktop fixes), O-11 (when to require MFA for all staff), D-02 (warehouse list,
+   (spreadsheet handling — please also confirm its scope). **O-12** (enrol first, then appoint).
+5. When you can: O-03 and O-04 (desktop fixes), D-02 (warehouse list,
    privately), D-03 (mapping source and reviewer), D-06 (approvals), and the WSL2 readiness checks in the readiness
    sheet, T-5 (read-only).

@@ -331,12 +331,12 @@ Shipping the audit trail to a separate system (V16.4.3) is a Phase 1D/1E task.
 
 | # | Limitation | Consequence | Resolution |
 |---|---|---|---|
-| L-1 | **MFA is mandatory only for the owner and administrators by default** (ASVS V6.3.3, Level 2, expects it for every user) | Ordinary users sign in with a password alone while the policy is `privileged` | The owner switches the policy to `all_users` (decision O-11). **Do not expose the server beyond a trusted network before that.** |
+| L-1 | **MFA is mandatory only for the owner and administrators by default** (ASVS V6.3.3, Level 2, expects it for every user) | Ordinary users sign in with a password alone while the policy is `privileged` | **Owner decision O-11:** MFA for all staff is required before any public internet exposure; until the policy is switched to `all_users`, verified and recovery-tested, the server stays on a trusted network. |
 | L-2 | **`trustProxy` is off** | Behind a reverse proxy every client would appear as the proxy's address: the per-address throttle would then affect all users together | Configure the proxy's address before deployment (Phase 1E). **Deployment blocker.** |
 | L-3 | No breached-password check (V6.2.12) | Only the bundled common-password list protects | Accepted for now: online breach services are unreliable from the deployment network |
 | L-4 | No general rate limit (V2.4.1) | A flood of refused requests also fills the audit trail | Proxy rate limits (1E); application limits with the asset APIs |
 | L-5 | The setup-code endpoint answers an unknown username slightly faster than a known one | Username probing, limited to 20 attempts per address per 15 minutes | Accepted (V6.3.8 is Level 3); MFA protects accounts even if a username is learned |
 | L-6 | Two non-owner administrators could grant each other warehouse access | Collusion, visible in the audit trail | Accepted (§2.3); the owner can keep `user.manage` to themselves |
 | L-7 | Audit trail kept only in the application database (V16.4.3) | A database-level compromise could alter history | Ship to a separate store in Phase 1D/1E |
-| L-8 | No rotation command for `WAM_MFA_ENCRYPTION_KEY` (V11.2.2) | Changing the key requires resetting every enrolled user | Re-encryption command in Phase 1E; the key fingerprint stored with each secret already allows it |
+| L-8 | No rotation command for `WAM_MFA_ENCRYPTION_KEY` (V11.2.2) | Changing the key requires resetting every enrolled user | **Owner requirement (O-07 follow-up):** a key-rotation and recovery procedure is documented **and tested** before production deployment (Phase 1E); the key fingerprint stored with each secret already allows it |
 | L-9 | TOTP is not phishing-resistant | A real-time relay page could capture a code | Accepted for Level 2; FIDO2/passkeys are a possible later addition (§3.2.6) |
