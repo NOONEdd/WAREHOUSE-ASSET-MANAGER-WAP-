@@ -134,7 +134,7 @@ Written before the implementation (slice 1B-2c), as the owner required; the code
 | Account | Second factor |
 |---|---|
 | The owner | **Always required.** |
-| Administrators (anyone holding an active system profile) | **Always required.** |
+| Administrators (anyone assigned a system profile, active or not — the definition rules A2–A4 use) | **Always required.** |
 | Anyone who has enrolled an authenticator | Always used at sign-in — enrolling cannot be bypassed later. |
 | All other users | Required when the **security policy** says `all_users`; otherwise optional (self-service enrolment). |
 

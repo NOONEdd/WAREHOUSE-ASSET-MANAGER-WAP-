@@ -33,6 +33,12 @@ export interface AppConfig {
   readonly http: { readonly host: string; readonly port: number }
   readonly database: DatabaseConfig
   readonly sessions: SessionConfig
+  /**
+   * 32 bytes that encrypt authenticator secrets at rest
+   * (docs/security/identity-and-access.md §3.2.2). Kept outside the
+   * database, and backed up separately from it.
+   */
+  readonly mfaEncryptionKey: Buffer
   readonly logLevel: LogLevel
 }
 
@@ -71,12 +77,14 @@ export function loadConfig(env: Env): AppConfig {
   const publicOrigin = readOrigin(env, 'WAM_PUBLIC_ORIGIN', environment, problems)
   const idleMinutes = readInteger(env, 'WAM_SESSION_IDLE_MINUTES', 30, 5, 240, problems)
   const absoluteHours = readInteger(env, 'WAM_SESSION_ABSOLUTE_HOURS', 12, 1, 24, problems)
+  const mfaEncryptionKey = readKey(env, 'WAM_MFA_ENCRYPTION_KEY', problems)
 
   if (
     environment === undefined ||
     connectionString === undefined ||
     logLevel === undefined ||
     publicOrigin === undefined ||
+    mfaEncryptionKey === undefined ||
     problems.length > 0
   ) {
     throw new ConfigError(problems)
@@ -87,6 +95,7 @@ export function loadConfig(env: Env): AppConfig {
     http: { host, port },
     database: { connectionString, poolMax, statementTimeoutMs },
     sessions: { idleMinutes, absoluteHours },
+    mfaEncryptionKey,
     logLevel
   }
 }
@@ -189,6 +198,22 @@ function readOrigin(
     return undefined
   }
   return url.origin
+}
+
+/** 32 random bytes, base64-encoded. The value is never echoed in a message. */
+function readKey(env: Env, name: string, problems: string[]): Buffer | undefined {
+  const raw = readString(env, name)
+  const generate = `generate one with: node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"`
+  if (raw === undefined) {
+    problems.push(`${name} is required (32 random bytes, base64; ${generate})`)
+    return undefined
+  }
+  const key = /^[A-Za-z0-9+/]{43}=$/.test(raw) ? Buffer.from(raw, 'base64') : null
+  if (key?.length !== 32) {
+    problems.push(`${name} must be exactly 32 bytes, base64-encoded (44 characters ending in "="; ${generate})`)
+    return undefined
+  }
+  return key
 }
 
 function readDatabaseUrl(env: Env, name: string, problems: string[]): string | undefined {

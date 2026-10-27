@@ -17,7 +17,7 @@ let cookie: string
 
 beforeAll(async () => {
   h = await createHarness()
-  app = buildApp({ db: h.appDb, logger: false, publicOrigin: ORIGIN, sessions: SESSIONS })
+  app = buildApp({ db: h.appDb, logger: false, publicOrigin: ORIGIN, sessions: SESSIONS, mfaEncryptionKey: h.mfaKey })
   app.post(
     '/test/job-titles',
     {

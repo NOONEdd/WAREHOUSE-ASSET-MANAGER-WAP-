@@ -1,5 +1,6 @@
 import { sql, type Kysely } from 'kysely'
 import type { Database } from '../db/connection.js'
+import { MFA_ENROLLED, POLICY_REQUIRES_MFA } from './mfa.js'
 import { newSessionToken, SESSION_TOKEN_PATTERN, sha256 } from './secrets.js'
 
 // Server-side sessions (docs/security/identity-and-access.md §4). The client
@@ -27,6 +28,9 @@ export type RevokeReason =
   | 'user_revoked'
   | 'owner_recovery'
   | 'owner_cli'
+  | 'mfa_required'
+  | 'mfa_changed'
+  | 'mfa_reset'
 
 export interface ActiveSession {
   readonly sessionId: number
@@ -34,6 +38,10 @@ export interface ActiveSession {
   readonly username: string
   readonly displayName: string
   readonly isOwner: boolean
+  /** The session was established with a second factor. */
+  readonly mfaVerified: boolean
+  /** The account needs one now (role, policy or enrolment; identity-and-access §3.2.1). */
+  readonly mfaRequired: boolean
 }
 
 /** Last-seen time is written at most once a minute per session. */
@@ -43,7 +51,8 @@ export async function createSession(
   db: Kysely<Database>,
   userId: number,
   settings: SessionSettings,
-  client: { readonly sourceIp: string | null; readonly userAgent: string | null }
+  client: { readonly sourceIp: string | null; readonly userAgent: string | null },
+  mfaVerified: boolean
 ): Promise<{ readonly token: string; readonly sessionId: number }> {
   const token = newSessionToken()
   const { id } = await db
@@ -53,7 +62,8 @@ export async function createSession(
       user_id: userId,
       expires_at: sql<Date>`now() + make_interval(hours => ${settings.absoluteHours})`,
       source_ip: client.sourceIp,
-      user_agent: client.userAgent === null ? null : client.userAgent.slice(0, 300)
+      user_agent: client.userAgent === null ? null : client.userAgent.slice(0, 300),
+      mfa_verified: mfaVerified
     })
     .returning('id')
     .executeTakeFirstOrThrow()
@@ -91,7 +101,15 @@ export async function findActiveSession(
   if (row.stale) {
     await db.updateTable('sessions').set({ last_seen_at: sql<Date>`now()` }).where('id', '=', row.sessionId).execute()
   }
-  return { sessionId: row.sessionId, userId: row.userId, username: row.username, displayName: row.displayName, isOwner: row.isOwner }
+  return {
+    sessionId: row.sessionId,
+    userId: row.userId,
+    username: row.username,
+    displayName: row.displayName,
+    isOwner: row.isOwner,
+    mfaVerified: row.mfaVerified,
+    mfaRequired: row.mfaRequired
+  }
 }
 
 /** The per-request session query; exported so the performance check can EXPLAIN exactly this query. */
@@ -105,6 +123,8 @@ export function sessionLookupQuery(db: Kysely<Database>, tokenHash: Buffer, idle
       'u.username',
       'u.display_name as displayName',
       'u.is_owner as isOwner',
+      's.mfa_verified as mfaVerified',
+      sql<boolean>`(${POLICY_REQUIRES_MFA} OR ${MFA_ENROLLED})`.as('mfaRequired'),
       sql<boolean>`s.last_seen_at < now() - make_interval(secs => ${TOUCH_INTERVAL_SECONDS})`.as('stale')
     ])
     .where('s.token_hash', '=', tokenHash)
@@ -129,6 +149,20 @@ export async function revokeSessionByToken(
     .returning(['id', 'user_id'])
     .executeTakeFirst()
   return row === undefined ? null : { sessionId: row.id, userId: row.user_id }
+}
+
+export async function revokeSession(db: Kysely<Database>, sessionId: number, reason: RevokeReason): Promise<void> {
+  await db
+    .updateTable('sessions')
+    .set({ revoked_at: sql<Date>`now()`, revoked_reason: reason })
+    .where('id', '=', sessionId)
+    .where('revoked_at', 'is', null)
+    .execute()
+}
+
+/** After the user proved a second factor inside this session (self-service enrolment). */
+export async function markSessionMfaVerified(db: Kysely<Database>, sessionId: number): Promise<void> {
+  await db.updateTable('sessions').set({ mfa_verified: true }).where('id', '=', sessionId).execute()
 }
 
 /** Ends every live session of a user (optionally keeping one); returns how many. */

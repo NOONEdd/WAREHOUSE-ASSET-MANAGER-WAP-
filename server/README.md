@@ -1,8 +1,10 @@
 # server/ — WAM web server
 
-**Status: Phase 1B-2 (identity and access) in progress.** On top of the Phase 1B-1 foundation (configuration,
-health endpoints, PostgreSQL, migrations, startup safety checks, test harness), the server now has users, sessions,
-configurable permission profiles, warehouses, the owner CLI and an append-only audit trail. The binding rules are in
+**Status: Phase 1B-2 (identity and access) complete on the server side, including multi-factor authentication
+(slice 1B-2c).** On top of the Phase 1B-1 foundation (configuration, health endpoints, PostgreSQL, migrations,
+startup safety checks, test harness), the server has users, sessions, multi-factor authentication (authenticator
+apps and recovery codes), configurable permission profiles, warehouses, the owner CLI and an append-only audit
+trail. The binding rules are in
 [`../docs/security/identity-and-access.md`](../docs/security/identity-and-access.md). There are still **no** asset,
 import or reporting features; those are Phase 1B-3 onward.
 
@@ -65,6 +67,7 @@ value stops the process with a list of every problem (never echoing the value).
 | `WAM_DATABASE_URL` | yes (server) | — | `postgresql://wam_app:PASSWORD@HOST:PORT/wam`. Must be the **wam_app** role. |
 | `WAM_MIGRATION_DATABASE_URL` | yes (migrations) | — | Same database, **wam_owner** role. Never give this to the server. |
 | `WAM_PUBLIC_ORIGIN` | yes (server) | — | The address users open, e.g. `https://wam.example` (origin only, no path). State-changing requests must come from it. **Must be `https://` when `WAM_ENV=production`**; `http://` (development and tests only) switches the session cookie to its non-`Secure` development form. |
+| `WAM_MFA_ENCRYPTION_KEY` | yes (server) | — | 32 random bytes, base64 (44 characters ending in `=`), that encrypt authenticator secrets at rest. Generate once: `node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"`. Keep it **outside the database and back it up separately from database backups**: without it no enrolled user can complete sign-in (recovery: identity-and-access §3.2.5). Never commit it. |
 | `WAM_SESSION_IDLE_MINUTES` | no | `30` | Sign-out after this much inactivity (5–240). |
 | `WAM_SESSION_ABSOLUTE_HOURS` | no | `12` | Sign-out after this long regardless of activity (1–24). |
 | `WAM_HTTP_HOST` | no | `127.0.0.1` | Loopback: in production the server sits behind a reverse proxy on the same machine. |
@@ -118,13 +121,16 @@ npm run build
 export WAM_ENV=production WAM_MIGRATION_DATABASE_URL='postgresql://wam_owner:…@…/wam'
 npm run owner -- status                                              # read-only
 npm run owner -- bootstrap --username <name> --display-name "<name>"   # once; prints a one-time setup code
-npm run owner -- recover --yes             # owner locked out: new setup code, owner signed out, throttling lifted
+npm run owner -- recover --yes             # owner locked out: new setup code, owner signed out, throttling and MFA lock lifted
+npm run owner -- recover --reset-mfa --yes # as above, and removes the owner's authenticator (lost phone, no recovery codes)
 npm run owner -- transfer --to <username> --yes                     # ownership moves to another active user
 npm run owner -- end-all-sessions --yes                             # incident response: everyone signs in again
 ```
 
 A setup code is shown once, works once, and expires after 24 hours. Hand it over in person or by phone, never by
-e-mail or chat. The owner then chooses a password on the sign-in page ("Set password with a setup code").
+e-mail or chat. The owner then chooses a password on the sign-in page ("Set password with a setup code") and, at the
+first sign-in, sets up an authenticator app: the owner and administrators can never sign in without one.
+`status` also shows whether the owner has an authenticator, whether it is locked, and the MFA policy.
 
 ## What the server refuses at startup (`src/db/safety.ts`)
 
@@ -153,9 +159,10 @@ migrations this code does not know. Each case has a test.
 
 | Area | Endpoints |
 |---|---|
-| Sign-in | `POST /api/auth/login`, `/logout`, `/change-password`, `/setup-password` |
-| Own account | `GET /api/me`, `GET /api/me/sessions`, `POST /api/me/sessions/end-others` |
-| Users | `GET /api/admin/users`, `GET/PATCH /api/admin/users/:id`, `POST /api/admin/users`, `PUT /api/admin/users/:id/access`, `POST /api/admin/users/:id/setup-code`, `POST /api/admin/users/:id/end-sessions` |
+| Sign-in | `POST /api/auth/login` (`200` signed in, or `202` with `next` = `mfa_verify` or `mfa_enroll` and a short-lived second-step cookie), `POST /api/auth/mfa/verify`, `POST /api/auth/mfa/enroll/start`, `/enroll/confirm`, `POST /api/auth/logout`, `/change-password`, `/setup-password` |
+| Own account | `GET /api/me`, `GET /api/me/sessions`, `POST /api/me/sessions/end-others`, `GET /api/me/mfa`, `POST /api/me/mfa/enroll/start`, `/enroll/confirm`, `/recovery-codes`, `/disable` |
+| Users | `GET /api/admin/users`, `GET/PATCH /api/admin/users/:id`, `POST /api/admin/users`, `PUT /api/admin/users/:id/access`, `POST /api/admin/users/:id/setup-code`, `POST /api/admin/users/:id/reset-mfa`, `POST /api/admin/users/:id/end-sessions` |
+| Security policy (owner only) | `GET/PUT /api/admin/security-policy` — who must use MFA beyond the owner and administrators (`privileged` or `all_users`) |
 | Access catalogue | `GET /api/admin/permissions`, `GET/POST /api/admin/profiles`, `PATCH/DELETE /api/admin/profiles/:id`, `GET/POST /api/admin/job-titles`, `PATCH /api/admin/job-titles/:id` |
 | Warehouses | `GET/POST /api/admin/warehouses`, `PATCH /api/admin/warehouses/:id` |
 | Audit | `GET /api/admin/audit-events` (everything), `GET /api/warehouses/:warehouseId/audit-events` (one warehouse) |
@@ -164,9 +171,10 @@ Rules, outcomes and limitations: [`../docs/security/identity-and-access.md`](../
 
 ## Performance check
 
-`npm run test:perf` (not part of `verify`; about 15 seconds in the sandbox) seeds a synthetic volume — 2,000 users, 50 warehouses,
-5,000 sessions, 200,000 audit events — measures login and authenticated reads over real HTTP, and checks with
-`EXPLAIN` that the per-request queries use indexes. Targets and results: `docs/STATUS.md`.
+`npm run test:perf` (not part of `verify`; about 20 seconds in the sandbox) seeds a synthetic volume — 2,000 users, 50 warehouses,
+5,000 sessions, 200,000 audit events, about 600 enrolled authenticators — measures login, the second sign-in step and
+authenticated reads over real HTTP, and checks with `EXPLAIN` that the per-request queries use indexes. Targets and
+results: `docs/STATUS.md`.
 
 ## Pinned versions (exact; verified on the npm registry, each at least 7 days old when adopted)
 

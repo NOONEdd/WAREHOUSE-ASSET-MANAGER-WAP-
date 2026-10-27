@@ -29,7 +29,10 @@ export interface AuditEvent {
 
 // Never stored, at any depth: a defect that tried would fail loudly here
 // instead of leaking a secret into a permanent record (ASVS V16.2.5).
-const FORBIDDEN_KEY = /pass(word)?|secret|token|setup_?code|code_?hash|cookie/i
+// From 1B-2c also recovery codes and otpauth links (authenticator secrets are
+// covered by "secret"); counts such as "recoveryCodesRemaining" and business
+// codes such as a warehouse "code" stay allowed.
+const FORBIDDEN_KEY = /pass(word)?|secret|token|setup_?code|code_?hash|cookie|otpauth|recovery_?codes?$/i
 
 function assertNoSecrets(value: unknown, path: string): void {
   if (Array.isArray(value)) {

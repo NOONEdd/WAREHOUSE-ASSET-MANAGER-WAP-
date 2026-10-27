@@ -1,7 +1,25 @@
-import type { FastifyInstance } from 'fastify'
+import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import { sql, type Kysely } from 'kysely'
 import { AppError } from '../../appError.js'
 import { recordAudit } from '../../audit/audit.js'
+import {
+  createLoginChallenge,
+  deleteLoginChallenge,
+  deleteUserLoginChallenges,
+  findLoginChallenge,
+  type ChallengePurpose,
+  type LoginChallenge
+} from '../../auth/loginChallenges.js'
+import {
+  clearMfaFailures,
+  confirmEnrollment,
+  MFA_ENROLLED,
+  MFA_MAX_FAILED_ATTEMPTS,
+  POLICY_REQUIRES_MFA,
+  serverUnixSeconds,
+  startEnrollment,
+  verifySecondFactor
+} from '../../auth/mfa.js'
 import { checkPassword, PASSWORD_MAX_LENGTH } from '../../auth/passwordPolicy.js'
 import { hashPassword, needsRehash, verifyAgainstDummy, verifyPassword } from '../../auth/passwords.js'
 import {
@@ -10,21 +28,31 @@ import {
   revokeUserSessions,
   type SessionSettings
 } from '../../auth/sessions.js'
+import type { SecretKey } from '../../auth/secretBox.js'
 import { checkSetupCode, deleteSetupCode } from '../../auth/setupCodes.js'
 import { isLoginThrottled, isSetupThrottled, recordFailure, usernameKey } from '../../auth/throttle.js'
 import type { Database } from '../../db/connection.js'
 import { authOf } from '../authorization.js'
-import { clearedSessionCookie, readCookie, sessionCookie, type CookieSettings } from '../cookies.js'
+import {
+  challengeCookie,
+  clearedChallengeCookie,
+  clearedSessionCookie,
+  readCookie,
+  sessionCookie,
+  type CookieSettings
+} from '../cookies.js'
 import { actorOf, auditContext, userAgentOf } from '../requestContext.js'
 
 // Authentication endpoints (docs/security/identity-and-access.md §3–§4).
-// Exactly two ways to authenticate exist: password login, and a one-time
-// setup code that sets a new password (ASVS 5.0.0 V6.1.3, V6.3.4).
+// A session is obtained only by password login, followed by a second factor
+// whenever the account needs one (§3.2); a one-time setup code only sets a
+// new password (ASVS 5.0.0 V6.1.3, V6.3.4, V6.4.3).
 
 export interface AuthRouteOptions {
   readonly db: Kysely<Database>
   readonly sessions: SessionSettings
   readonly cookie: CookieSettings
+  readonly mfaKey: SecretKey
 }
 
 const PUBLIC = { access: { kind: 'public' } } as const
@@ -33,6 +61,8 @@ const AUTHENTICATED = { access: { kind: 'authenticated' } } as const
 // Generous upper bounds on input; the policy itself is enforced in code.
 const passwordInput = { type: 'string', minLength: 1, maxLength: 1024 } as const
 const usernameInput = { type: 'string', minLength: 1, maxLength: 64 } as const
+/** An authenticator code or a recovery code, as typed. */
+export const mfaCodeInput = { type: 'string', minLength: 1, maxLength: 64 } as const
 
 export const userSummarySchema = {
   type: 'object',
@@ -46,8 +76,77 @@ export const userSummarySchema = {
   additionalProperties: false
 } as const
 
+const secondStepSchema = {
+  type: 'object',
+  properties: { next: { type: 'string', enum: ['mfa_verify', 'mfa_enroll'] }, expiresInSeconds: { type: 'integer' } },
+  required: ['next', 'expiresInSeconds'],
+  additionalProperties: false
+} as const
+
+export const enrollmentStartSchema = {
+  type: 'object',
+  properties: { secret: { type: 'string' }, otpauthUri: { type: 'string' }, expiresInMinutes: { type: 'integer' } },
+  required: ['secret', 'otpauthUri', 'expiresInMinutes'],
+  additionalProperties: false
+} as const
+
+export const recoveryCodesSchema = { type: 'array', items: { type: 'string' } } as const
+
+interface SignInUser {
+  readonly id: number
+  readonly username: string
+  readonly display_name: string
+  readonly is_owner: boolean
+}
+
 export function registerAuthRoutes(app: FastifyInstance, options: AuthRouteOptions): void {
-  const { db, sessions, cookie } = options
+  const { db, sessions, cookie, mfaKey } = options
+
+  /** The final step of every sign-in: a new session, the old one (if any) ended, audited. */
+  async function completeSignIn(
+    request: FastifyRequest,
+    reply: FastifyReply,
+    user: SignInUser,
+    method: string,
+    work: (trx: Kysely<Database>) => Promise<Readonly<Record<string, unknown>>>,
+    mfaVerified: boolean
+  ): Promise<{ readonly user: Record<string, unknown> }> {
+    const existingToken = readCookie(request.headers.cookie, cookie.name)
+    const { token } = await db.transaction().execute(async (trx) => {
+      const details = await work(trx)
+      // ASVS V7.2.4: a login always gets a new token and ends the old one.
+      if (existingToken !== null) await revokeSessionByToken(trx, existingToken, 'login_replaced')
+      const created = await createSession(trx, user.id, sessions, { sourceIp: request.ip, userAgent: userAgentOf(request) }, mfaVerified)
+      await trx.updateTable('users').set({ last_login_at: sql<Date>`now()` }).where('id', '=', user.id).execute()
+      await recordAudit(trx, auditContext(request), {
+        action: 'auth.login.succeeded',
+        outcome: 'success',
+        actor: { id: user.id, username: user.username },
+        target: { type: 'user', id: user.id },
+        details: { method, ...details }
+      })
+      return created
+    })
+    const challengeSent = readCookie(request.headers.cookie, cookie.challengeName) !== null
+    reply.header('set-cookie', challengeSent ? [sessionCookie(cookie, token), clearedChallengeCookie(cookie)] : sessionCookie(cookie, token))
+    return { user: { id: user.id, username: user.username, displayName: user.display_name, isOwner: user.is_owner } }
+  }
+
+  /** The live second-step challenge of this request for `purpose`, and its (active) user. */
+  async function challengeOf(request: FastifyRequest, purpose: ChallengePurpose): Promise<{ challenge: LoginChallenge; user: SignInUser }> {
+    const challenge = await findLoginChallenge(db, readCookie(request.headers.cookie, cookie.challengeName))
+    if (challenge?.purpose !== purpose) throw new AppError('UNAUTHENTICATED')
+    const user = await db
+      .selectFrom('users')
+      .select(['id', 'username', 'display_name', 'is_owner', 'status'])
+      .where('id', '=', challenge.userId)
+      .executeTakeFirstOrThrow()
+    if (user.status !== 'active') {
+      await deleteLoginChallenge(db, challenge.id)
+      throw new AppError('UNAUTHENTICATED')
+    }
+    return { challenge, user }
+  }
 
   app.post(
     '/api/auth/login',
@@ -66,7 +165,8 @@ export function registerAuthRoutes(app: FastifyInstance, options: AuthRouteOptio
             properties: { user: userSummarySchema },
             required: ['user'],
             additionalProperties: false
-          }
+          },
+          202: secondStepSchema
         }
       }
     },
@@ -99,27 +199,163 @@ export function registerAuthRoutes(app: FastifyInstance, options: AuthRouteOptio
       }
 
       const upgradedHash = needsRehash(hash) ? await hashPassword(password) : null
-      const existingToken = readCookie(request.headers.cookie, cookie.name)
-      const { token } = await db.transaction().execute(async (trx) => {
-        // ASVS V7.2.4: a login always gets a new token and ends the old one.
-        if (existingToken !== null) await revokeSessionByToken(trx, existingToken, 'login_replaced')
-        const created = await createSession(trx, user.id, sessions, { sourceIp: request.ip, userAgent: userAgentOf(request) })
-        await trx
-          .updateTable('users')
-          .set(upgradedHash === null ? { last_login_at: sql<Date>`now()` } : { last_login_at: sql<Date>`now()`, password_hash: upgradedHash })
-          .where('id', '=', user.id)
-          .execute()
-        await recordAudit(trx, context, {
-          action: 'auth.login.succeeded',
-          outcome: 'success',
-          actor: { id: user.id, username: user.username },
-          target,
-          details: { method: 'password', ...(upgradedHash === null ? {} : { hashUpgraded: true }) }
+      const rehash = async (trx: Kysely<Database>): Promise<Record<string, unknown>> => {
+        if (upgradedHash === null) return {}
+        await trx.updateTable('users').set({ password_hash: upgradedHash }).where('id', '=', user.id).execute()
+        return { hashUpgraded: true }
+      }
+
+      // identity-and-access §3.2.4: a correct password for an account that
+      // needs a second factor yields a short-lived challenge, not a session.
+      const mfa = await db
+        .selectFrom('users as u')
+        .leftJoin('user_mfa as m', 'm.user_id', 'u.id')
+        .select([POLICY_REQUIRES_MFA.as('policyRequires'), MFA_ENROLLED.as('enrolled'), 'm.failed_attempts'])
+        .where('u.id', '=', user.id)
+        .executeTakeFirstOrThrow()
+      if (mfa.enrolled || mfa.policyRequires) {
+        if (mfa.enrolled && (mfa.failed_attempts ?? 0) >= MFA_MAX_FAILED_ATTEMPTS) {
+          await recordAudit(db, context, { action: 'auth.login.mfa_locked', outcome: 'denied', actor: null, target })
+          throw new AppError('MFA_LOCKED')
+        }
+        const purpose: ChallengePurpose = mfa.enrolled ? 'verify' : 'enroll'
+        const next = purpose === 'verify' ? 'mfa_verify' : 'mfa_enroll'
+        const challenge = await db.transaction().execute(async (trx) => {
+          const details = await rehash(trx)
+          const created = await createLoginChallenge(trx, user.id, purpose)
+          await recordAudit(trx, context, {
+            action: 'auth.login.password_accepted',
+            outcome: 'success',
+            actor: null,
+            target,
+            details: { next, ...details }
+          })
+          return created
         })
-        return created
+        reply.header('set-cookie', challengeCookie(cookie, challenge.token, challenge.maxAgeSeconds))
+        return reply.status(202).send({ next, expiresInSeconds: challenge.maxAgeSeconds })
+      }
+
+      return completeSignIn(request, reply, user, 'password', rehash, false)
+    }
+  )
+
+  app.post(
+    '/api/auth/mfa/verify',
+    {
+      config: PUBLIC,
+      schema: {
+        body: { type: 'object', properties: { code: mfaCodeInput }, required: ['code'], additionalProperties: false },
+        response: {
+          200: {
+            type: 'object',
+            properties: { user: userSummarySchema, recoveryCodesRemaining: { type: 'integer' } },
+            required: ['user', 'recoveryCodesRemaining'],
+            additionalProperties: false
+          }
+        }
+      }
+    },
+    async (request, reply) => {
+      const { code } = request.body as { code: string }
+      const { challenge, user } = await challengeOf(request, 'verify')
+      const context = auditContext(request)
+      const target = { type: 'user', id: user.id }
+      const result = await verifySecondFactor(db, mfaKey, user.id, code, serverUnixSeconds())
+      if (!result.ok) {
+        await recordAudit(db, context, {
+          action: result.justLocked ? 'auth.mfa.locked' : result.locked ? 'auth.login.mfa_locked' : 'auth.mfa.failed',
+          outcome: result.locked && !result.justLocked ? 'denied' : 'failure',
+          actor: null,
+          target,
+          details: { step: 'sign_in' }
+        })
+        if (result.locked) {
+          await deleteLoginChallenge(db, challenge.id)
+          throw new AppError('MFA_LOCKED')
+        }
+        throw new AppError('INVALID_MFA_CODE')
+      }
+      const method = result.method === 'totp' ? 'password+totp' : 'password+recovery_code'
+      const body = await completeSignIn(
+        request,
+        reply,
+        user,
+        method,
+        async (trx) => {
+          if (!(await deleteLoginChallenge(trx, challenge.id))) throw new AppError('UNAUTHENTICATED')
+          return result.method === 'recovery_code' ? { recoveryCodesRemaining: result.recoveryCodesRemaining } : {}
+        },
+        true
+      )
+      return { ...body, recoveryCodesRemaining: result.recoveryCodesRemaining }
+    }
+  )
+
+  app.post(
+    '/api/auth/mfa/enroll/start',
+    { config: PUBLIC, schema: { response: { 200: enrollmentStartSchema } } },
+    async (request) => {
+      const { challenge, user } = await challengeOf(request, 'enroll')
+      const enrolled = await db.selectFrom('user_mfa').select('user_id').where('user_id', '=', user.id).executeTakeFirst()
+      if (enrolled !== undefined) {
+        await deleteLoginChallenge(db, challenge.id)
+        throw new AppError('MFA_ALREADY_ENROLLED')
+      }
+      const started = await startEnrollment(db, mfaKey, user)
+      await recordAudit(db, auditContext(request), {
+        action: 'auth.mfa.enrollment_started',
+        outcome: 'success',
+        actor: null,
+        target: { type: 'user', id: user.id },
+        details: { step: 'sign_in' }
       })
-      reply.header('set-cookie', sessionCookie(cookie, token))
-      return { user: { id: user.id, username: user.username, displayName: user.display_name, isOwner: user.is_owner } }
+      return started
+    }
+  )
+
+  app.post(
+    '/api/auth/mfa/enroll/confirm',
+    {
+      config: PUBLIC,
+      schema: {
+        body: { type: 'object', properties: { code: mfaCodeInput }, required: ['code'], additionalProperties: false },
+        response: {
+          200: {
+            type: 'object',
+            properties: { user: userSummarySchema, recoveryCodes: recoveryCodesSchema },
+            required: ['user', 'recoveryCodes'],
+            additionalProperties: false
+          }
+        }
+      }
+    },
+    async (request, reply) => {
+      const { code } = request.body as { code: string }
+      const { challenge, user } = await challengeOf(request, 'enroll')
+      let recoveryCodes: string[] = []
+      const body = await completeSignIn(
+        request,
+        reply,
+        user,
+        'password+totp',
+        async (trx) => {
+          const confirmed = await confirmEnrollment(trx, mfaKey, user.id, code, serverUnixSeconds(), { replace: false })
+          if (confirmed === null) throw new AppError('INVALID_MFA_CODE')
+          recoveryCodes = confirmed.recoveryCodes
+          if (!(await deleteLoginChallenge(trx, challenge.id))) throw new AppError('UNAUTHENTICATED')
+          await recordAudit(trx, auditContext(request), {
+            action: 'auth.mfa.enrolled',
+            outcome: 'success',
+            actor: { id: user.id, username: user.username },
+            target: { type: 'user', id: user.id },
+            details: { step: 'sign_in' }
+          })
+          return { enrolled: true }
+        },
+        true
+      )
+      return { ...body, recoveryCodes }
     }
   )
 
@@ -188,6 +424,7 @@ export function registerAuthRoutes(app: FastifyInstance, options: AuthRouteOptio
           .where('id', '=', session.userId)
           .execute()
         const ended = await revokeUserSessions(trx, session.userId, 'password_changed', session.sessionId)
+        await deleteUserLoginChallenges(trx, session.userId)
         await recordAudit(trx, context, {
           action: 'auth.password.changed',
           outcome: 'success',
@@ -252,6 +489,9 @@ export function registerAuthRoutes(app: FastifyInstance, options: AuthRouteOptio
           .where('id', '=', user.id)
           .execute()
         const ended = await revokeUserSessions(trx, user.id, 'password_setup')
+        // A new password ends a second-factor lock (identity-and-access §3.2.5) and any half-finished sign-in.
+        await clearMfaFailures(trx, user.id)
+        await deleteUserLoginChallenges(trx, user.id)
         await recordAudit(trx, context, {
           action: 'auth.setup.completed',
           outcome: 'success',

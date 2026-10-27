@@ -11,6 +11,7 @@ const UNREACHABLE = 'postgresql://nobody:nothing@%2Fnonexistent%2Fwam-socket:543
 const ORIGIN = 'http://127.0.0.1:3000'
 /** What a same-origin browser request from the WAM UI carries. */
 const SAME_ORIGIN = { origin: ORIGIN, 'x-wam-csrf': '1' }
+const MFA_KEY = Buffer.alloc(32, 1)
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
 
 let app: FastifyInstance
@@ -18,7 +19,7 @@ let db: Kysely<Database>
 
 beforeEach(async () => {
   db = createDatabase(createPool({ connectionString: UNREACHABLE, poolMax: 1, statementTimeoutMs: 1_000 }, () => undefined))
-  app = buildApp({ db, logger: false, readinessTimeoutMs: 1_000, publicOrigin: ORIGIN, sessions: { idleMinutes: 30, absoluteHours: 12 } })
+  app = buildApp({ db, logger: false, readinessTimeoutMs: 1_000, publicOrigin: ORIGIN, sessions: { idleMinutes: 30, absoluteHours: 12 }, mfaEncryptionKey: MFA_KEY })
   // Test-only routes, registered before the app is ready, to exercise error handling.
   const config = { access: { kind: 'public' } } as const
   app.get('/test/boom', { config }, () => {
@@ -48,7 +49,7 @@ describe('GET /health/live', () => {
   })
 
   it('sends HSTS when the public origin is https', async () => {
-    const secure = buildApp({ db, logger: false, publicOrigin: 'https://wam.example', sessions: { idleMinutes: 30, absoluteHours: 12 } })
+    const secure = buildApp({ db, logger: false, publicOrigin: 'https://wam.example', sessions: { idleMinutes: 30, absoluteHours: 12 }, mfaEncryptionKey: MFA_KEY })
     try {
       const res = await secure.inject({ method: 'GET', url: '/health/live' })
       expect(res.headers['strict-transport-security']).toBe('max-age=31536000; includeSubDomains')
@@ -149,7 +150,7 @@ describe('request forgery protection (state-changing requests)', () => {
 
 describe('route access declarations', () => {
   it('refuse to register a route that does not declare who may call it', () => {
-    const fresh = buildApp({ db, logger: false, publicOrigin: ORIGIN, sessions: { idleMinutes: 30, absoluteHours: 12 } })
+    const fresh = buildApp({ db, logger: false, publicOrigin: ORIGIN, sessions: { idleMinutes: 30, absoluteHours: 12 }, mfaEncryptionKey: MFA_KEY })
     expect(() => fresh.get('/test/undeclared', () => 'x')).toThrow(/no access declaration/)
   })
 })

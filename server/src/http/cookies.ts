@@ -1,17 +1,20 @@
 // The session cookie (docs/security/identity-and-access.md §4; ASVS 5.0.0
-// V3.3). Over https: `__Host-wam_session` with Secure. Plain http (allowed
-// only outside production, see config.ts): `wam_session` without Secure,
-// because browsers refuse both the prefix and the attribute there.
+// V3.3) and the second-step cookie of a sign-in (§3.2.4). Over https:
+// `__Host-` names with Secure. Plain http (allowed only outside production,
+// see config.ts): unprefixed names without Secure, because browsers refuse
+// both the prefix and the attribute there.
 
 export interface CookieSettings {
   readonly name: string
+  /** The second sign-in step (multi-factor authentication). */
+  readonly challengeName: string
   readonly secure: boolean
 }
 
 export function cookieSettingsFor(publicOrigin: string): CookieSettings {
   return publicOrigin.startsWith('https://')
-    ? { name: '__Host-wam_session', secure: true }
-    : { name: 'wam_session', secure: false }
+    ? { name: '__Host-wam_session', challengeName: '__Host-wam_mfa', secure: true }
+    : { name: 'wam_session', challengeName: 'wam_mfa', secure: false }
 }
 
 /**
@@ -42,4 +45,13 @@ export function sessionCookie(settings: CookieSettings, token: string): string {
 
 export function clearedSessionCookie(settings: CookieSettings): string {
   return `${settings.name}=; Max-Age=0; ${attributes(settings)}`
+}
+
+/** Lives only as long as the challenge it refers to. */
+export function challengeCookie(settings: CookieSettings, token: string, maxAgeSeconds: number): string {
+  return `${settings.challengeName}=${token}; Max-Age=${String(maxAgeSeconds)}; ${attributes(settings)}`
+}
+
+export function clearedChallengeCookie(settings: CookieSettings): string {
+  return `${settings.challengeName}=; Max-Age=0; ${attributes(settings)}`
 }

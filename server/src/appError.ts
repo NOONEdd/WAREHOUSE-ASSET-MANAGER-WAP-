@@ -9,9 +9,12 @@ const DEFINITIONS = {
   PASSWORD_POLICY: [400, 'The new password does not meet the password policy'],
   INVALID_SETUP_CODE: [400, 'The setup code is invalid or has expired'],
   CURRENT_PASSWORD_INCORRECT: [400, 'The current password is incorrect'],
+  INVALID_MFA_CODE: [400, 'The verification code is incorrect'],
+  MFA_ENROLLMENT_EXPIRED: [400, 'Start setting up the authenticator app again'],
   IDEMPOTENCY_KEY_REQUIRED: [400, 'An Idempotency-Key header (UUID) is required for this request'],
   INVALID_CREDENTIALS: [401, 'Incorrect username or password'],
   UNAUTHENTICATED: [401, 'Authentication required'],
+  MFA_REQUIRED: [401, 'This account requires multi-factor authentication; sign in again'],
   FORBIDDEN: [403, 'Forbidden'],
   NOT_FOUND: [404, 'Not found'],
   VERSION_CONFLICT: [409, 'The record was changed by someone else; reload it and try again'],
@@ -19,7 +22,9 @@ const DEFINITIONS = {
   NAME_TAKEN: [409, 'That name is already in use'],
   CODE_TAKEN: [409, 'That code is already in use'],
   PROFILE_IN_USE: [409, 'The profile is still assigned to users'],
+  MFA_ALREADY_ENROLLED: [409, 'An authenticator app is already set up for this account'],
   IDEMPOTENCY_KEY_REUSED: [422, 'This Idempotency-Key was already used for a different request'],
+  MFA_LOCKED: [423, 'Too many incorrect verification codes; ask an administrator to reset your sign-in'],
   TOO_MANY_REQUESTS: [429, 'Too many attempts; try again later']
 } as const satisfies Record<string, readonly [number, string]>
 

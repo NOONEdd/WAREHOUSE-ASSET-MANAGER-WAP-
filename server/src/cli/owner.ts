@@ -1,6 +1,8 @@
 import { userInfo } from 'node:os'
 import { sql, type Kysely } from 'kysely'
 import { recordAudit, type AuditContext } from '../audit/audit.js'
+import { deleteUserLoginChallenges } from '../auth/loginChallenges.js'
+import { clearMfaFailures, MFA_MAX_FAILED_ATTEMPTS, removeMfa } from '../auth/mfa.js'
 import { checkUsername } from '../auth/passwordPolicy.js'
 import { revokeUserSessions } from '../auth/sessions.js'
 import { issueSetupCode, SETUP_CODE_TTL_HOURS } from '../auth/setupCodes.js'
@@ -19,14 +21,15 @@ import type { CliIo } from './migrate.js'
 //
 //   status                                         read-only
 //   bootstrap --username U --display-name "N"      first owner; refused if an owner exists
-//   recover --yes                                  new setup code for the owner; ends the owner's sessions
+//   recover [--reset-mfa] --yes                    new setup code for the owner; ends the owner's sessions,
+//                                                  clears lockouts; --reset-mfa also removes the authenticator
 //   transfer --to U --yes                          makes user U the owner
 //   end-all-sessions --yes                         signs everyone out (incident response)
 
 export const OWNER_USAGE = [
   'usage: npm run owner -- status',
   '       npm run owner -- bootstrap --username <name> --display-name "<full name>"',
-  '       npm run owner -- recover --yes',
+  '       npm run owner -- recover [--reset-mfa] --yes',
   '       npm run owner -- transfer --to <username> --yes',
   '       npm run owner -- end-all-sessions --yes'
 ].join('\n')
@@ -35,30 +38,36 @@ interface Parsed {
   readonly command: string
   readonly values: ReadonlyMap<string, string>
   readonly yes: boolean
+  readonly switches: ReadonlySet<string>
 }
 
 const VALUE_FLAGS = new Set(['--username', '--display-name', '--to'])
+const SWITCHES = new Set(['--reset-mfa'])
 
 function parse(args: readonly string[]): Parsed | null {
   const [command, ...rest] = args
   if (command === undefined) return null
   const values = new Map<string, string>()
+  const switches = new Set<string>()
   let yes = false
   for (let i = 0; i < rest.length; i += 1) {
     const flag = rest[i] ?? ''
     if (flag === '--yes') yes = true
+    else if (SWITCHES.has(flag) && !switches.has(flag)) switches.add(flag)
     else if (VALUE_FLAGS.has(flag) && rest[i + 1] !== undefined && !values.has(flag)) {
       values.set(flag, rest[i + 1] ?? '')
       i += 1
     } else return null
   }
-  return { command, values, yes }
+  return { command, values, yes, switches }
 }
 
-const EXPECTED: Readonly<Record<string, { readonly values: readonly string[]; readonly yes: boolean }>> = {
+const EXPECTED: Readonly<
+  Record<string, { readonly values: readonly string[]; readonly yes: boolean; readonly switches?: readonly string[] }>
+> = {
   status: { values: [], yes: false },
   bootstrap: { values: ['--username', '--display-name'], yes: false },
-  recover: { values: [], yes: true },
+  recover: { values: [], yes: true, switches: ['--reset-mfa'] },
   transfer: { values: ['--to'], yes: true },
   'end-all-sessions': { values: [], yes: true }
 }
@@ -91,7 +100,8 @@ export async function runOwnerCli(args: readonly string[], env: Env, io: CliIo):
     parsed === null ||
     expected === undefined ||
     parsed.values.size !== expected.values.length ||
-    !expected.values.every((flag) => parsed.values.has(flag))
+    !expected.values.every((flag) => parsed.values.has(flag)) ||
+    ![...parsed.switches].every((flag) => expected.switches?.includes(flag) === true)
   ) {
     io.err(OWNER_USAGE)
     return 2
@@ -132,7 +142,7 @@ export async function runOwnerCli(args: readonly string[], env: Env, io: CliIo):
       case 'bootstrap':
         return await bootstrap(db, io, parsed.values.get('--username') ?? '', parsed.values.get('--display-name') ?? '')
       case 'recover':
-        return await recover(db, io)
+        return await recover(db, io, parsed.switches.has('--reset-mfa'))
       case 'transfer':
         return await transfer(db, io, parsed.values.get('--to') ?? '')
       default:
@@ -155,7 +165,26 @@ async function status(db: Kysely<Database>, io: CliIo): Promise<number> {
     .where('revoked_at', 'is', null)
     .where('expires_at', '>', sql<Date>`now()`)
     .executeTakeFirstOrThrow()
+  const ownerMfa = await db
+    .selectFrom('users as u')
+    .innerJoin('user_mfa as m', 'm.user_id', 'u.id')
+    .select('m.failed_attempts')
+    .where('u.is_owner', '=', true)
+    .executeTakeFirst()
+  const policy = await db.selectFrom('security_policy').select('mfa_required_for').executeTakeFirst()
   io.out(`Owner: ${owner === undefined ? '(none — run "bootstrap")' : owner.username}`)
+  if (owner !== undefined) {
+    io.out(
+      `Owner authenticator: ${
+        ownerMfa === undefined
+          ? 'not set up (required: it is set up at the next sign-in)'
+          : ownerMfa.failed_attempts >= MFA_MAX_FAILED_ATTEMPTS
+            ? 'set up, LOCKED after too many wrong codes (run "recover")'
+            : 'set up'
+      }`
+    )
+  }
+  io.out(`MFA required for: ${policy === undefined ? '(policy missing: everyone)' : policy.mfa_required_for === 'all_users' ? 'all users' : 'the owner and administrators'}`)
   io.out(`Users: ${String(users.active)} active of ${String(users.total)}`)
   io.out(`Unexpired sessions: ${String(sessions.live)}`)
   return 0
@@ -207,7 +236,7 @@ async function bootstrap(db: Kysely<Database>, io: CliIo, usernameInput: string,
   })
 }
 
-async function recover(db: Kysely<Database>, io: CliIo): Promise<number> {
+async function recover(db: Kysely<Database>, io: CliIo, resetMfa: boolean): Promise<number> {
   return db.transaction().execute(async (trx) => {
     const owner = await trx.selectFrom('users').select(['id', 'username']).where('is_owner', '=', true).executeTakeFirst()
     if (owner === undefined) {
@@ -222,14 +251,24 @@ async function recover(db: Kysely<Database>, io: CliIo): Promise<number> {
     const code = await issueSetupCode(trx, owner.id, null)
     const sessionsEnded = await revokeUserSessions(trx, owner.id, 'owner_recovery')
     const throttlingCleared = await clearLoginFailures(trx, owner.username)
+    // identity-and-access §3.2.5: recovery always ends a second-factor lock;
+    // --reset-mfa also removes the authenticator (lost phone, no recovery codes).
+    await deleteUserLoginChallenges(trx, owner.id)
+    await clearMfaFailures(trx, owner.id)
+    const authenticatorRemoved = resetMfa ? await removeMfa(trx, owner.id) : false
     await recordAudit(trx, CLI_CONTEXT, {
       action: 'owner.recovery_code_issued',
       outcome: 'success',
       actor: null,
       target: { type: 'user', id: owner.id },
-      details: { via: 'owner-cli', osUser: osUser(), sessionsEnded, throttlingCleared }
+      details: { via: 'owner-cli', osUser: osUser(), sessionsEnded, throttlingCleared, mfaReset: resetMfa, authenticatorRemoved }
     })
     io.out(`The owner's password was cleared and ${String(sessionsEnded)} session(s) ended.`)
+    io.out(
+      resetMfa
+        ? 'The authenticator app was removed: after setting the new password, the owner sets up a new one at sign-in.'
+        : 'The authenticator app was kept (a second-factor lock, if any, was cleared). If the phone is lost, use --reset-mfa.'
+    )
     printSetupCode(io, owner.username, code)
     return 0
   })

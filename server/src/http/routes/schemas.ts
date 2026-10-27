@@ -32,6 +32,7 @@ const userListItemProperties = {
   isOwner: { type: 'boolean' },
   isAdministrator: { type: 'boolean' },
   hasPassword: { type: 'boolean' },
+  mfaEnrolled: { type: 'boolean' },
   lastLoginAt: nullableDateTime,
   createdAt: dateTime,
   version: { type: 'integer' }

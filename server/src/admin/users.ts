@@ -1,6 +1,8 @@
 import { sql, type Kysely } from 'kysely'
 import { AppError } from '../appError.js'
 import { recordAudit, type AuditContext } from '../audit/audit.js'
+import { deleteUserLoginChallenges } from '../auth/loginChallenges.js'
+import { removeMfa } from '../auth/mfa.js'
 import { checkUsername } from '../auth/passwordPolicy.js'
 import { revokeUserSessions } from '../auth/sessions.js'
 import { issueSetupCode, SETUP_CODE_TTL_HOURS } from '../auth/setupCodes.js'
@@ -21,6 +23,7 @@ export interface UserListItem {
   readonly isOwner: boolean
   readonly isAdministrator: boolean
   readonly hasPassword: boolean
+  readonly mfaEnrolled: boolean
   readonly lastLoginAt: Date | null
   readonly createdAt: Date
   readonly version: number
@@ -57,6 +60,7 @@ function baseUserQuery(db: Kysely<Database>) {
       'j.id as job_title_id',
       'j.name as job_title_name',
       sql<boolean>`u.password_hash IS NOT NULL`.as('has_password'),
+      sql<boolean>`EXISTS (SELECT 1 FROM wam.user_mfa m WHERE m.user_id = u.id)`.as('mfa_enrolled'),
       sql<boolean>`EXISTS (SELECT 1 FROM wam.user_system_profiles usp WHERE usp.user_id = u.id)`.as('is_administrator')
     ])
 }
@@ -73,6 +77,7 @@ function toListItem(row: BaseRow): UserListItem {
     isOwner: row.is_owner,
     isAdministrator: row.is_administrator,
     hasPassword: row.has_password,
+    mfaEnrolled: row.mfa_enrolled,
     lastLoginAt: row.last_login_at,
     createdAt: row.created_at,
     version: row.version
@@ -240,6 +245,7 @@ export async function updateUser(
     .execute()
   // ASVS V7.4.2: disabling ends every session at once.
   const sessionsEnded = after.status === 'disabled' && before.status === 'active' ? await revokeUserSessions(trx, id, 'user_disabled') : 0
+  if (after.status === 'disabled') await deleteUserLoginChallenges(trx, id)
   const action =
     before.status !== after.status ? (after.status === 'disabled' ? 'user.disabled' : 'user.enabled') : 'user.updated'
   await recordAudit(trx, context, {
@@ -252,7 +258,10 @@ export async function updateUser(
   return getUser(trx, id)
 }
 
-/** A reset: clears the password, ends all sessions, and returns a new one-time code (shown once). */
+/**
+ * A password reset: clears the password, ends all sessions, and returns a new
+ * one-time code (shown once). The authenticator stays (ASVS V6.4.3).
+ */
 export async function issueUserSetupCode(
   trx: Kysely<Database>,
   context: AuditContext,
@@ -261,9 +270,7 @@ export async function issueUserSetupCode(
 ): Promise<{ readonly setupCode: string; readonly expiresInHours: number }> {
   const target = await lockManagedUser(trx, actor, id)
   if (target.status !== 'active') throw new AppError('VALIDATION_FAILED', { reason: 'enable the account first' })
-  await trx.updateTable('users').set({ password_hash: null, updated_at: sql<Date>`now()` }).where('id', '=', id).execute()
-  const sessionsEnded = await revokeUserSessions(trx, id, 'setup_code_issued')
-  const setupCode = await issueSetupCode(trx, id, actor.userId)
+  const { setupCode, sessionsEnded } = await resetPassword(trx, actor, id, 'setup_code_issued')
   await recordAudit(trx, context, {
     action: 'user.setup_code_issued',
     outcome: 'success',
@@ -272,6 +279,46 @@ export async function issueUserSetupCode(
     details: { sessionsEnded, expiresInHours: SETUP_CODE_TTL_HOURS }
   })
   return { setupCode, expiresInHours: SETUP_CODE_TTL_HOURS }
+}
+
+/**
+ * Lost authenticator (identity-and-access §3.2.4): removes it and its
+ * recovery codes, and always resets the password at the same time, so that
+ * someone who knows only the old password cannot enrol their own
+ * authenticator. The person receives the setup code after proving who they
+ * are, as at account creation (ASVS V6.4.4).
+ */
+export async function resetUserMfa(
+  trx: Kysely<Database>,
+  context: AuditContext,
+  actor: Actor,
+  id: number
+): Promise<{ readonly setupCode: string; readonly expiresInHours: number }> {
+  const target = await lockManagedUser(trx, actor, id)
+  if (target.status !== 'active') throw new AppError('VALIDATION_FAILED', { reason: 'enable the account first' })
+  const hadAuthenticator = await removeMfa(trx, id)
+  const { setupCode, sessionsEnded } = await resetPassword(trx, actor, id, 'mfa_reset')
+  await recordAudit(trx, context, {
+    action: 'user.mfa_reset',
+    outcome: 'success',
+    actor: auditActor(actor),
+    target: { type: 'user', id },
+    details: { hadAuthenticator, sessionsEnded, expiresInHours: SETUP_CODE_TTL_HOURS }
+  })
+  return { setupCode, expiresInHours: SETUP_CODE_TTL_HOURS }
+}
+
+async function resetPassword(
+  trx: Kysely<Database>,
+  actor: Actor,
+  id: number,
+  reason: 'setup_code_issued' | 'mfa_reset'
+): Promise<{ readonly setupCode: string; readonly sessionsEnded: number }> {
+  await trx.updateTable('users').set({ password_hash: null, updated_at: sql<Date>`now()` }).where('id', '=', id).execute()
+  const sessionsEnded = await revokeUserSessions(trx, id, reason)
+  await deleteUserLoginChallenges(trx, id)
+  const setupCode = await issueSetupCode(trx, id, actor.userId)
+  return { setupCode, sessionsEnded }
 }
 
 export async function endUserSessions(trx: Kysely<Database>, context: AuditContext, actor: Actor, id: number): Promise<number> {

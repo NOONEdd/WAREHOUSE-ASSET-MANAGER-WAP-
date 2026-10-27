@@ -1,7 +1,8 @@
 import { sql } from 'kysely'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { MFA_MAX_FAILED_ATTEMPTS } from '../../src/auth/mfa.js'
 import { runOwnerCli } from '../../src/cli/owner.js'
-import { auditRows, call, createHarness, GOOD_PASSWORD, insertUser, login, type Harness } from '../support/appHarness.js'
+import { auditRows, call, cookieFrom, createHarness, GOOD_PASSWORD, insertUser, login, totpFor, type Harness } from '../support/appHarness.js'
 import { createTestDatabase, migrationEnv } from '../support/testDatabase.js'
 
 // The owner CLI (docs/security/identity-and-access.md §1): the only way to
@@ -108,6 +109,56 @@ describe('owner recovery', () => {
   })
 })
 
+describe('owner recovery and the second factor (identity-and-access §3.2.5)', () => {
+  const ownerId = async () =>
+    (await h.ownerDb.selectFrom('users').select('id').where('username', '=', 'site.owner').executeTakeFirstOrThrow()).id
+  const passwordStep = (password: string) =>
+    call(h, { method: 'POST', url: '/api/auth/login', payload: { username: 'site.owner', password } })
+
+  it('"recover" lifts a second-factor lock and keeps the authenticator', async () => {
+    const id = await ownerId()
+    await sql`UPDATE wam.user_mfa SET failed_attempts = ${MFA_MAX_FAILED_ATTEMPTS} WHERE user_id = ${id}`.execute(h.ownerDb)
+    expect((await passwordStep('recovered long passphrase')).statusCode).toBe(423)
+    expect((await owner(['status'])).out).toMatch(/Owner authenticator: set up, LOCKED/)
+
+    const result = await owner(['recover', '--yes'])
+    expect(result.code).toBe(0)
+    expect(result.out).toMatch(/authenticator app was kept/)
+    // Lifted by the recovery itself, not only once the new password is set.
+    const after = await h.ownerDb.selectFrom('user_mfa').select('failed_attempts').where('user_id', '=', id).executeTakeFirstOrThrow()
+    expect(after.failed_attempts).toBe(0)
+    expect((await owner(['status'])).out).toMatch(/Owner authenticator: set up$/m)
+    expect((await setPassword('site.owner', setupCodeIn(result.out), 'recovered long passphrase')).statusCode).toBe(204)
+    // Same authenticator, lock gone: the second step works again.
+    const step = await passwordStep('recovered long passphrase')
+    expect(step.json()).toMatchObject({ next: 'mfa_verify' })
+    const verified = await call(h, { method: 'POST', url: '/api/auth/mfa/verify', cookie: cookieFrom(step, 'wam_mfa'), payload: { code: await totpFor(h, id) } })
+    expect(verified.statusCode).toBe(200)
+    expect((await auditRows(h, 'owner.recovery_code_issued')).at(-1)?.details).toMatchObject({ mfaReset: false, authenticatorRemoved: false })
+  })
+
+  it('"recover --reset-mfa" also removes the authenticator; the owner enrols again after the new password', async () => {
+    const id = await ownerId()
+    const result = await owner(['recover', '--reset-mfa', '--yes'])
+    expect(result.code).toBe(0)
+    expect(result.out).toMatch(/authenticator app was removed/)
+    expect(await h.ownerDb.selectFrom('user_mfa').select('user_id').where('user_id', '=', id).executeTakeFirst()).toBeUndefined()
+    expect((await owner(['status'])).out).toMatch(/Owner authenticator: not set up/)
+    // Without the new setup code nothing works; with it, the owner must enrol before any session.
+    expect((await passwordStep('recovered long passphrase')).statusCode).toBe(401)
+    expect((await setPassword('site.owner', setupCodeIn(result.out), 'recovered long passphrase')).statusCode).toBe(204)
+    expect((await passwordStep('recovered long passphrase')).json()).toMatchObject({ next: 'mfa_enroll' })
+    expect((await auditRows(h, 'owner.recovery_code_issued')).at(-1)?.details).toMatchObject({ mfaReset: true, authenticatorRemoved: true })
+  })
+
+  it.each([[['status', '--reset-mfa']], [['end-all-sessions', '--reset-mfa', '--yes']], [['recover', '--reset-mfa']], [['recover', '--reset-mfa', '--reset-mfa', '--yes']]])(
+    'accepts --reset-mfa only on a confirmed "recover": %j',
+    async (args) => {
+      expect((await owner(args)).code).toBe(2)
+    }
+  )
+})
+
 describe('ownership transfer', () => {
   it('moves ownership to an active user and signs the previous owner out', async () => {
     await insertUser(h, { username: 'successor' })
@@ -145,6 +196,8 @@ describe('end-all-sessions and status', () => {
     const result = await owner(['status'])
     expect(result.code).toBe(0)
     expect(result.out).toMatch(/Owner: successor/)
+    expect(result.out).toMatch(/Owner authenticator: set up$/m)
+    expect(result.out).toMatch(/MFA required for: the owner and administrators/)
   })
 
   it.each([[[]], [['frobnicate']], [['bootstrap', '--username', 'x']], [['status', '--yes', '--to']]])('rejects the usage %j', async (args) => {

@@ -6,17 +6,22 @@ import { accessQuery } from '../../src/access/access.js'
 import { auditEventsQuery } from '../../src/admin/auditQuery.js'
 import { sha256 } from '../../src/auth/secrets.js'
 import { sessionLookupQuery } from '../../src/auth/sessions.js'
-import { cachedHash, createHarness, GOOD_PASSWORD, ORIGIN, type Harness } from '../support/appHarness.js'
+import { cachedHash, createHarness, enrollMfa, GOOD_PASSWORD, ORIGIN, totpFor, type Harness } from '../support/appHarness.js'
 
 // Measured, not claimed. Targets were fixed BEFORE the first run
 // (docs/STATUS.md, "Performance"):
 //   - authenticated reads: p95 ≤ 100 ms at 20 concurrent clients
 //   - login: p95 ≤ 1,000 ms at 10 concurrent clients (Argon2id is deliberately costly)
 //   - the per-request queries use indexes on the large tables (no sequential scans)
+// Added with MFA (1B-2c), target fixed before its first run:
+//   - second sign-in step (authenticator code): p95 ≤ 100 ms at 10 concurrent
+//     clients — no slow hashing, one short write transaction
 // Synthetic volume: 2,000 users, 50 warehouses, 30 profiles, 6,000 warehouse
-// assignments, 5,000 sessions, 200,000 audit events, 10,000 recent failures.
+// assignments, 5,000 sessions, 200,000 audit events, 10,000 recent failures,
+// about 600 enrolled authenticators.
 
 const TARGET_READ_P95_MS = 100
+const TARGET_SECOND_STEP_P95_MS = 100
 const TARGET_LOGIN_P95_MS = 1_000
 
 let h: Harness
@@ -57,7 +62,14 @@ async function measure(n: number, concurrency: number, request: (i: number) => P
   return { n, concurrency, p50: at(0.5), p95: at(0.95), p99: at(0.99), max: at(1), perSecond: Math.round((n / elapsed) * 1000) }
 }
 
-const results: { login?: Stats; me?: Stats; adminUsers?: Stats; warehouseAudit?: Stats; plans?: readonly string[] } = {}
+const results: {
+  login?: Stats
+  secondStep?: Stats
+  me?: Stats
+  adminUsers?: Stats
+  warehouseAudit?: Stats
+  plans?: readonly string[]
+} = {}
 
 beforeAll(async () => {
   h = await createHarness()
@@ -82,6 +94,10 @@ beforeAll(async () => {
   await sql`INSERT INTO wam.audit_events (action, outcome, warehouse_id, details)
             SELECT 'perf.synthetic_event', 'success', (SELECT min(id) FROM wam.warehouses) + (i % 51), '{}'::jsonb
               FROM generate_series(1, 200000) i`.execute(o)
+  // Enrolled authenticators for the planner's statistics (never used to sign in: the sealed values are filler).
+  await sql`INSERT INTO wam.user_mfa (user_id, totp_secret, totp_key_id)
+            SELECT u.id, decode(md5(u.id::text) || md5('b' || u.id) || md5('c' || u.id), 'hex'), '0000000000000000'
+              FROM wam.users u WHERE u.username SIMILAR TO 'perf.user1(5|6|7|8|9)[0-9][0-9]'`.execute(o)
   await sql`INSERT INTO wam.auth_failures (kind, username_key, source_ip)
             SELECT 'login', 'perf.user' || (i % 2000), ('10.' || (i % 250) || '.0.1')::inet FROM generate_series(1, 10000) i`.execute(o)
   await sql`ANALYZE`.execute(h.superDb)
@@ -101,12 +117,30 @@ const postJson = (path: string, body: unknown, cookie?: string) =>
     body: JSON.stringify(body)
   })
 
-async function loginCookie(username: string): Promise<string> {
-  const res = await postJson('/api/auth/login', { username, password: GOOD_PASSWORD })
-  expect(res.status).toBe(200)
-  const cookie = res.headers.get('set-cookie')?.split(';')[0]
-  if (cookie === undefined) throw new Error('no cookie')
+function cookieNamed(res: Response, name: string): string {
+  const cookie = res.headers
+    .getSetCookie()
+    .map((c) => c.split(';')[0] ?? '')
+    .find((c) => c.startsWith(`${name}=`) && c !== `${name}=`)
+  if (cookie === undefined) throw new Error(`no ${name} cookie`)
   return cookie
+}
+
+/** The password step; returns the second-step cookie when the account needs one, else the session cookie. */
+async function passwordStep(username: string): Promise<{ readonly status: number; readonly cookie: string }> {
+  const res = await postJson('/api/auth/login', { username, password: GOOD_PASSWORD })
+  expect([200, 202]).toContain(res.status)
+  return { status: res.status, cookie: cookieNamed(res, res.status === 200 ? 'wam_session' : 'wam_mfa') }
+}
+
+/** A full sign-in, with the second step when the account needs one. */
+async function loginCookie(username: string): Promise<string> {
+  const first = await passwordStep(username)
+  if (first.status === 200) return first.cookie
+  const { id } = await h.ownerDb.selectFrom('users').select('id').where('username', '=', username).executeTakeFirstOrThrow()
+  const res = await postJson('/api/auth/mfa/verify', { code: await totpFor(h, id) }, first.cookie)
+  expect(res.status).toBe(200)
+  return cookieNamed(res, 'wam_session')
 }
 
 describe('performance (synthetic volume)', () => {
@@ -114,6 +148,23 @@ describe('performance (synthetic volume)', () => {
     const stats = await measure(100, 10, (i) => postJson('/api/auth/login', { username: `perf.user${String(i + 1)}`, password: GOOD_PASSWORD }))
     results.login = stats
     expect(stats.p95).toBeLessThanOrEqual(TARGET_LOGIN_P95_MS)
+  })
+
+  it(`second sign-in step (authenticator code): p95 ≤ ${String(TARGET_SECOND_STEP_P95_MS)} ms at 10 concurrent`, async () => {
+    const users = await h.ownerDb.selectFrom('users').select(['id', 'username']).where('username', 'like', 'perf.user10__').orderBy('id').limit(100).execute()
+    expect(users).toHaveLength(100)
+    const challenges: string[] = []
+    const codes: string[] = []
+    for (const user of users) {
+      await enrollMfa(h, user.id)
+      const step = await passwordStep(user.username)
+      expect(step.status).toBe(202)
+      challenges.push(step.cookie)
+      codes.push(await totpFor(h, user.id))
+    }
+    const stats = await measure(100, 10, (i) => postJson('/api/auth/mfa/verify', { code: codes[i] ?? '' }, challenges[i] ?? ''))
+    results.secondStep = stats
+    expect(stats.p95).toBeLessThanOrEqual(TARGET_SECOND_STEP_P95_MS)
   })
 
   it(`authenticated read GET /api/me: p95 ≤ ${String(TARGET_READ_P95_MS)} ms at 20 concurrent`, async () => {
@@ -126,6 +177,7 @@ describe('performance (synthetic volume)', () => {
   it(`admin list and audit page: p95 ≤ ${String(TARGET_READ_P95_MS)} ms at 20 concurrent`, async () => {
     const ownerId = (await h.ownerDb.selectFrom('users').select('id').where('username', '=', 'perf.user1').executeTakeFirstOrThrow()).id
     await sql`UPDATE wam.users SET is_owner = true WHERE id = ${ownerId}`.execute(h.ownerDb)
+    await enrollMfa(h, ownerId)
     const cookie = await loginCookie('perf.user1')
     const warehouseId = (await h.ownerDb.selectFrom('warehouses').select('id').where('code', '=', 'PERF-010').executeTakeFirstOrThrow()).id
     const adminUsers = await measure(1000, 20, (i) => fetch(`${base}/api/admin/users?limit=50&search=perf.user${String(i % 9)}`, { headers: { cookie } }))
@@ -171,7 +223,7 @@ describe('performance (synthetic volume)', () => {
     // (one row per administrator), permission_profiles and permissions (tens of
     // rows) — for tables that small a sequential scan is the planner's correct,
     // cheapest choice; their primary-key indexes are used once they grow.
-    const large = ['sessions', 'audit_events', 'users', 'user_warehouse_profiles']
+    const large = ['sessions', 'audit_events', 'users', 'user_warehouse_profiles', 'user_mfa']
     for (const [name, nodes] of Object.entries(plans)) {
       for (const table of large) {
         expect(nodes.some((n) => n === `Seq Scan on ${table}`), `${name} must not scan ${table} sequentially: ${nodes.join(' → ')}`).toBe(false)

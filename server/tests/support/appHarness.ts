@@ -1,8 +1,12 @@
+import { randomBytes } from 'node:crypto'
 import type { FastifyInstance, InjectOptions, LightMyRequestResponse } from 'fastify'
 import { sql, type Kysely } from 'kysely'
 import { expect } from 'vitest'
 import { buildApp } from '../../src/app.js'
 import { hashPassword } from '../../src/auth/passwords.js'
+import { open, seal, secretKeyFrom, totpSecretContext } from '../../src/auth/secretBox.js'
+import { newTotpSecret, totpCode } from '../../src/auth/totp.js'
+import { base32Decode } from './base32.js'
 import type { Database } from '../../src/db/connection.js'
 import { createMigrator } from '../../src/db/migrator.js'
 import { connect, createTestDatabase, type TestDatabase } from './testDatabase.js'
@@ -15,6 +19,7 @@ export const ORIGIN = 'http://127.0.0.1:3000'
 /** What a same-origin request from the WAM user interface carries. */
 export const SAME_ORIGIN = { origin: ORIGIN, 'x-wam-csrf': '1' } as const
 export const COOKIE_NAME = 'wam_session'
+export const CHALLENGE_COOKIE_NAME = 'wam_mfa'
 export const SESSIONS = { idleMinutes: 30, absoluteHours: 12 } as const
 
 /** A password that satisfies the policy (15+ characters, not common, no context words). */
@@ -29,6 +34,8 @@ export interface Harness {
   readonly ownerDb: Kysely<Database>
   /** superuser — for simulating time passing and failures. */
   readonly superDb: Kysely<Database>
+  /** The app's MFA encryption key (random per harness). */
+  readonly mfaKey: Buffer
   close(): Promise<void>
 }
 
@@ -39,7 +46,8 @@ export async function createHarness(): Promise<Harness> {
   expect(error).toBeUndefined()
   const appDb = connect(tdb.urls.app)
   const superDb = connect(tdb.urls.superuser)
-  const app = buildApp({ db: appDb, logger: false, publicOrigin: ORIGIN, sessions: SESSIONS })
+  const mfaKey = randomBytes(32)
+  const app = buildApp({ db: appDb, logger: false, publicOrigin: ORIGIN, sessions: SESSIONS, mfaEncryptionKey: mfaKey })
   await app.ready()
   return {
     tdb,
@@ -47,6 +55,7 @@ export async function createHarness(): Promise<Harness> {
     appDb,
     ownerDb,
     superDb,
+    mfaKey,
     close: async () => {
       await app.close()
       await appDb.destroy()
@@ -122,12 +131,46 @@ export async function assignSystemProfile(h: Harness, userId: number, profileId:
   await h.ownerDb.insertInto('user_system_profiles').values({ user_id: userId, profile_id: profileId, granted_by: null }).execute()
 }
 
-export function sessionCookieFrom(res: LightMyRequestResponse): string {
+/** `name=value` of the cookie `name` set by the response (any of its Set-Cookie headers). */
+export function cookieFrom(res: LightMyRequestResponse, name: string): string {
   const header = res.headers['set-cookie']
-  const value = Array.isArray(header) ? header[0] : header
-  const match = value === undefined ? null : new RegExp(`^${COOKIE_NAME}=([^;]+)`).exec(value)
-  if (match?.[1] === undefined) throw new Error(`no session cookie in response: ${String(value)}`)
-  return `${COOKIE_NAME}=${match[1]}`
+  const values = header === undefined ? [] : Array.isArray(header) ? header : [header]
+  for (const value of values) {
+    const match = new RegExp(`^${name}=([^;]+)`).exec(value)
+    if (match?.[1] !== undefined) return `${name}=${match[1]}`
+  }
+  throw new Error(`no ${name} cookie in response: ${JSON.stringify(values)}`)
+}
+
+export function sessionCookieFrom(res: LightMyRequestResponse): string {
+  return cookieFrom(res, COOKIE_NAME)
+}
+
+/** Enrols an authenticator directly in the database; returns its raw secret. */
+export async function enrollMfa(h: Harness, userId: number): Promise<Buffer> {
+  const secret = newTotpSecret()
+  const key = secretKeyFrom(h.mfaKey)
+  await h.ownerDb
+    .insertInto('user_mfa')
+    .values({ user_id: userId, totp_secret: seal(key, secret, totpSecretContext(userId)), totp_key_id: key.id, totp_last_step: 0 })
+    .execute()
+  return secret
+}
+
+/**
+ * The code the user's authenticator app shows now (plus `offsetSeconds`).
+ * By default first clears the single-use marker, so that tests can sign the
+ * same user in several times within one 30-second step.
+ */
+export async function totpFor(
+  h: Harness,
+  userId: number,
+  options: { readonly offsetSeconds?: number; readonly keepSingleUse?: boolean } = {}
+): Promise<string> {
+  const row = await h.ownerDb.selectFrom('user_mfa').select('totp_secret').where('user_id', '=', userId).executeTakeFirstOrThrow()
+  const secret = open(secretKeyFrom(h.mfaKey), row.totp_secret, totpSecretContext(userId))
+  if (options.keepSingleUse !== true) await h.ownerDb.updateTable('user_mfa').set({ totp_last_step: 0 }).where('user_id', '=', userId).execute()
+  return totpCode(secret, Math.floor(Date.now() / 1000) + (options.offsetSeconds ?? 0))
 }
 
 /** A same-origin request; pass `cookie` to send it as a signed-in user. */
@@ -140,6 +183,11 @@ export function call(h: Harness, options: InjectOptions & { readonly cookie?: st
   })
 }
 
+/**
+ * Signs in through the real API, completing the second step when the
+ * account needs one (verifying with the enrolled authenticator, or
+ * enrolling one first). Returns the session cookie.
+ */
 export async function login(
   h: Harness,
   username: string,
@@ -147,8 +195,22 @@ export async function login(
   extra: Partial<InjectOptions> = {}
 ): Promise<string> {
   const res = await call(h, { method: 'POST', url: '/api/auth/login', payload: { username, password }, ...extra })
-  expect(res.statusCode, res.body).toBe(200)
-  return sessionCookieFrom(res)
+  if (res.statusCode === 200) return sessionCookieFrom(res)
+  expect(res.statusCode, res.body).toBe(202)
+  const challenge = cookieFrom(res, CHALLENGE_COOKIE_NAME)
+  const { next } = res.json<{ next: string }>()
+  const { id } = await h.ownerDb.selectFrom('users').select('id').where('username', '=', username.trim().toLowerCase()).executeTakeFirstOrThrow()
+  if (next === 'mfa_verify') {
+    const verified = await call(h, { method: 'POST', url: '/api/auth/mfa/verify', cookie: challenge, payload: { code: await totpFor(h, id) }, ...extra })
+    expect(verified.statusCode, verified.body).toBe(200)
+    return sessionCookieFrom(verified)
+  }
+  const started = await call(h, { method: 'POST', url: '/api/auth/mfa/enroll/start', cookie: challenge, ...extra })
+  expect(started.statusCode, started.body).toBe(200)
+  const code = totpCode(base32Decode(started.json<{ secret: string }>().secret), Math.floor(Date.now() / 1000))
+  const confirmed = await call(h, { method: 'POST', url: '/api/auth/mfa/enroll/confirm', cookie: challenge, payload: { code }, ...extra })
+  expect(confirmed.statusCode, confirmed.body).toBe(200)
+  return sessionCookieFrom(confirmed)
 }
 
 /** Audit rows, oldest first, optionally only one action. */

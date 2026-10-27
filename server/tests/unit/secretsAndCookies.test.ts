@@ -2,7 +2,14 @@ import { describe, expect, it } from 'vitest'
 import { recordAudit } from '../../src/audit/audit.js'
 import { newSessionToken, newSetupCode, normalizeSetupCode, SESSION_TOKEN_PATTERN } from '../../src/auth/secrets.js'
 import { createDatabase, createPool } from '../../src/db/connection.js'
-import { clearedSessionCookie, cookieSettingsFor, readCookie, sessionCookie } from '../../src/http/cookies.js'
+import {
+  challengeCookie,
+  clearedChallengeCookie,
+  clearedSessionCookie,
+  cookieSettingsFor,
+  readCookie,
+  sessionCookie
+} from '../../src/http/cookies.js'
 
 describe('session tokens', () => {
   it('are 256-bit random base64url strings, unique per call', () => {
@@ -33,7 +40,7 @@ describe('setup codes', () => {
 describe('session cookie', () => {
   it('uses the __Host- prefix and Secure over https (ASVS V3.3.1–V3.3.4)', () => {
     const settings = cookieSettingsFor('https://wam.example')
-    expect(settings).toEqual({ name: '__Host-wam_session', secure: true })
+    expect(settings).toEqual({ name: '__Host-wam_session', challengeName: '__Host-wam_mfa', secure: true })
     expect(sessionCookie(settings, 'TOKEN')).toBe('__Host-wam_session=TOKEN; Path=/; HttpOnly; SameSite=Strict; Secure')
     expect(clearedSessionCookie(settings)).toBe('__Host-wam_session=; Max-Age=0; Path=/; HttpOnly; SameSite=Strict; Secure')
   })
@@ -41,6 +48,13 @@ describe('session cookie', () => {
   it('drops the prefix and Secure only for plain-http development origins', () => {
     const settings = cookieSettingsFor('http://127.0.0.1:3000')
     expect(sessionCookie(settings, 'TOKEN')).toBe('wam_session=TOKEN; Path=/; HttpOnly; SameSite=Strict')
+    expect(challengeCookie(settings, 'TOKEN', 300)).toBe('wam_mfa=TOKEN; Max-Age=300; Path=/; HttpOnly; SameSite=Strict')
+  })
+
+  it('gives the second sign-in step its own short-lived __Host- cookie (identity-and-access §3.2.4)', () => {
+    const settings = cookieSettingsFor('https://wam.example')
+    expect(challengeCookie(settings, 'TOKEN', 300)).toBe('__Host-wam_mfa=TOKEN; Max-Age=300; Path=/; HttpOnly; SameSite=Strict; Secure')
+    expect(clearedChallengeCookie(settings)).toBe('__Host-wam_mfa=; Max-Age=0; Path=/; HttpOnly; SameSite=Strict; Secure')
   })
 
   it('reads its own cookie among others', () => {
@@ -60,12 +74,31 @@ describe('audit details', () => {
   const db = createDatabase(createPool({ connectionString: 'postgresql://x:y@%2Fnonexistent:5432/none', poolMax: 1, statementTimeoutMs: 1000 }, () => undefined))
   const context = { requestId: null, sourceIp: null }
 
-  it.each([{ password: 'x' }, { newPassword: 'x' }, { nested: { setupCode: 'x' } }, { list: [{ token: 'x' }] }, { cookie: 'x' }])(
-    'refuse to store secret-named fields: %j',
-    async (details) => {
-      await expect(recordAudit(db, context, { action: 'test.event', outcome: 'success', actor: null, details })).rejects.toThrow(
-        /audit details must not contain/
-      )
-    }
-  )
+  it.each([
+    { password: 'x' },
+    { newPassword: 'x' },
+    { nested: { setupCode: 'x' } },
+    { list: [{ token: 'x' }] },
+    { cookie: 'x' },
+    { recoveryCodes: ['x'] },
+    { nested: { recovery_code: 'x' } },
+    { otpauthUri: 'otpauth://x' },
+    { totpSecret: 'x' }
+  ])('refuse to store secret-named fields: %j', async (details) => {
+    await expect(recordAudit(db, context, { action: 'test.event', outcome: 'success', actor: null, details })).rejects.toThrow(
+      /audit details must not contain/
+    )
+  })
+
+  it('still allow counts, methods and business codes', async () => {
+    // Passes the guard and only then fails at the (unreachable) database.
+    await expect(
+      recordAudit(db, context, {
+        action: 'test.event',
+        outcome: 'success',
+        actor: null,
+        details: { recoveryCodesRemaining: 3, method: 'password+totp', after: { code: 'SYN-A' } }
+      })
+    ).rejects.not.toThrow(/audit details must not contain/)
+  })
 })

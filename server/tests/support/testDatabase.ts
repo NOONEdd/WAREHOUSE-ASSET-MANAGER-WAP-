@@ -47,6 +47,8 @@ export function serverEnv(url: string, overrides: Env = {}): Env {
     WAM_ENV: 'test',
     WAM_DATABASE_URL: url,
     WAM_PUBLIC_ORIGIN: 'http://127.0.0.1:3000',
+    // A fresh random key per call: test data never outlives the run.
+    WAM_MFA_ENCRYPTION_KEY: randomBytes(32).toString('base64'),
     WAM_HTTP_PORT: '0',
     WAM_LOG_LEVEL: 'silent',
     ...overrides

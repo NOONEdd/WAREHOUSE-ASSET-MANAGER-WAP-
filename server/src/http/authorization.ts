@@ -3,7 +3,7 @@ import type { Kysely } from 'kysely'
 import { hasSystemPermission, hasWarehousePermission, loadAccess, type Access } from '../access/access.js'
 import type { SystemPermission, WarehousePermission } from '../access/permissions.js'
 import { AppError } from '../appError.js'
-import { findActiveSession, type ActiveSession, type SessionSettings } from '../auth/sessions.js'
+import { findActiveSession, revokeSession, type ActiveSession, type SessionSettings } from '../auth/sessions.js'
 import type { Database } from '../db/connection.js'
 import { readCookie, type CookieSettings } from './cookies.js'
 import { actorOf, auditDenial } from './requestContext.js'
@@ -62,6 +62,20 @@ export function registerAuthorization(app: FastifyInstance, options: Authorizati
     const token = readCookie(request.headers.cookie, options.cookie.name)
     const session = token === null ? null : await findActiveSession(options.db, token, options.sessions)
     if (session === null) throw new AppError('UNAUTHENTICATED')
+    // identity-and-access §3.2.1: an account that needs a second factor never
+    // acts through a session established without one — for example after
+    // being appointed administrator, or after the policy changed. The
+    // session ends here, once, and the user signs in again.
+    if (session.mfaRequired && !session.mfaVerified) {
+      await revokeSession(options.db, session.sessionId, 'mfa_required')
+      await auditDenial(options.db, request, {
+        action: 'session.ended_mfa_required',
+        outcome: 'denied',
+        actor: { id: session.userId, username: session.username },
+        target: { type: 'session', id: session.sessionId }
+      })
+      throw new AppError('MFA_REQUIRED')
+    }
     request.auth = { session, access: await loadAccess(options.db, session.userId, session.isOwner) }
 
     if (await isAllowed(options.db, request, request.auth.access, access)) return

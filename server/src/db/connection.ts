@@ -2,7 +2,7 @@ import { Kysely, PostgresDialect, type ColumnType, type Generated } from 'kysely
 import pg from 'pg'
 import type { DatabaseConfig } from '../config.js'
 
-// Row types of the tables in schema `wam` (migration 0002), keyed by table
+// Row types of the tables in schema `wam` (migrations 0002, 0003), keyed by table
 // name. A migration that changes a table changes its type here in the same
 // commit. `never` in an insert/update position marks columns the server's
 // role may not write (see the column grants in the migration).
@@ -100,6 +100,7 @@ export interface SessionsTable {
   revoked_reason: ColumnType<string | null, never, string | null>
   source_ip: InsertOnly<string | null>
   user_agent: InsertOnly<string | null>
+  mfa_verified: ColumnType<boolean, boolean | undefined, boolean>
 }
 
 export interface AuthFailuresTable {
@@ -143,6 +144,50 @@ export interface AuditEventsTable {
   details: ColumnType<Record<string, unknown>, string, never>
 }
 
+export type MfaRequiredFor = 'privileged' | 'all_users'
+
+export interface SecurityPolicyTable {
+  id: ReadOnly<boolean>
+  mfa_required_for: ColumnType<MfaRequiredFor, never, MfaRequiredFor>
+  updated_at: ColumnType<Date, never, Date>
+  updated_by: ColumnType<number | null, never, number | null>
+  version: ColumnType<number, never, number>
+}
+
+export interface UserMfaTable {
+  user_id: InsertOnly<number>
+  /** AES-256-GCM sealed (src/auth/secretBox.ts). */
+  totp_secret: InsertOnly<Buffer>
+  totp_key_id: InsertOnly<string>
+  /** bigint: pg returns it as a string. */
+  totp_last_step: ColumnType<string, number, number>
+  failed_attempts: ColumnType<number, number | undefined, number>
+  enrolled_at: ColumnType<Date, never, never>
+}
+
+export interface MfaRecoveryCodesTable {
+  user_id: InsertOnly<number>
+  code_hash: InsertOnly<Buffer>
+  used_at: ColumnType<Date | null, never, Date | null>
+}
+
+export interface MfaEnrollmentsTable {
+  user_id: number
+  totp_secret: Buffer
+  totp_key_id: string
+  created_at: Timestamp
+  expires_at: Date
+}
+
+export interface LoginChallengesTable {
+  id: Generated<number>
+  token_hash: InsertOnly<Buffer>
+  user_id: InsertOnly<number>
+  purpose: InsertOnly<'verify' | 'enroll'>
+  created_at: ColumnType<Date, never, never>
+  expires_at: InsertOnly<Date>
+}
+
 export interface Database {
   warehouses: WarehousesTable
   permissions: PermissionsTable
@@ -157,6 +202,11 @@ export interface Database {
   password_setup_codes: PasswordSetupCodesTable
   idempotency_keys: IdempotencyKeysTable
   audit_events: AuditEventsTable
+  security_policy: SecurityPolicyTable
+  user_mfa: UserMfaTable
+  mfa_recovery_codes: MfaRecoveryCodesTable
+  mfa_enrollments: MfaEnrollmentsTable
+  login_challenges: LoginChallengesTable
 }
 
 /** The application schema. Nothing the server uses lives in `public`. */

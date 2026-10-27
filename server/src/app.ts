@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import Fastify, { LogController, type FastifyInstance, type FastifyServerOptions } from 'fastify'
 import type { Kysely } from 'kysely'
+import { secretKeyFrom } from './auth/secretBox.js'
 import { MAX_SESSIONS_PER_USER, type SessionSettings } from './auth/sessions.js'
 import type { SessionConfig } from './config.js'
 import type { Database } from './db/connection.js'
@@ -10,9 +11,11 @@ import { registerErrorHandling } from './http/errors.js'
 import { registerForgeryProtection } from './http/forgery.js'
 import { registerHealthRoutes } from './http/health.js'
 import { registerAdminCatalogRoutes } from './http/routes/adminCatalogRoutes.js'
+import { registerAdminSecurityRoutes } from './http/routes/adminSecurityRoutes.js'
 import { registerAdminUserRoutes } from './http/routes/adminUserRoutes.js'
 import { registerAuthRoutes } from './http/routes/authRoutes.js'
 import { registerMeRoutes } from './http/routes/meRoutes.js'
+import { registerMfaRoutes } from './http/routes/mfaRoutes.js'
 
 export interface AppOptions {
   readonly db: Kysely<Database>
@@ -21,6 +24,8 @@ export interface AppOptions {
   /** See AppConfig.publicOrigin. */
   readonly publicOrigin: string
   readonly sessions: SessionConfig
+  /** See AppConfig.mfaEncryptionKey. */
+  readonly mfaEncryptionKey: Buffer
   readonly readinessTimeoutMs?: number
 }
 
@@ -64,6 +69,7 @@ export function buildApp(options: AppOptions): FastifyInstance {
 
   const sessions: SessionSettings = { ...options.sessions, maxPerUser: MAX_SESSIONS_PER_USER }
   const cookie = cookieSettingsFor(options.publicOrigin)
+  const mfaKey = secretKeyFrom(options.mfaEncryptionKey)
 
   registerErrorHandling(app)
   registerForgeryProtection(app, { db: options.db, publicOrigin: options.publicOrigin })
@@ -71,9 +77,11 @@ export function buildApp(options: AppOptions): FastifyInstance {
   registerAuthorization(app, { db: options.db, sessions, cookie })
 
   registerHealthRoutes(app, { db: options.db, readinessTimeoutMs: options.readinessTimeoutMs ?? 2_000 })
-  registerAuthRoutes(app, { db: options.db, sessions, cookie })
+  registerAuthRoutes(app, { db: options.db, sessions, cookie, mfaKey })
   registerMeRoutes(app, { db: options.db, sessions })
+  registerMfaRoutes(app, { db: options.db, mfaKey })
   registerAdminUserRoutes(app, { db: options.db })
   registerAdminCatalogRoutes(app, { db: options.db })
+  registerAdminSecurityRoutes(app, { db: options.db })
   return app
 }

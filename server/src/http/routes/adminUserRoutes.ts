@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify'
 import type { Kysely } from 'kysely'
 import { actorFrom } from '../../admin/rules.js'
-import { createUser, endUserSessions, getUser, issueUserSetupCode, listUsers, setUserAccess, updateUser } from '../../admin/users.js'
+import { createUser, endUserSessions, getUser, issueUserSetupCode, listUsers, resetUserMfa, setUserAccess, updateUser } from '../../admin/users.js'
 import { USERNAME_PATTERN } from '../../auth/passwordPolicy.js'
 import type { Database } from '../../db/connection.js'
 import { sendIdempotent } from '../idempotency.js'
@@ -11,8 +11,8 @@ import { idParams, positiveId, userDetailSchema, userListItemSchema, version } f
 // User administration for the owner's admin panel (decision O-09).
 // Route-level permission first, then the escalation rules A1–A4 inside the
 // services. Changes require an Idempotency-Key (decision D-05), except the
-// setup-code endpoint, whose response is a secret that must never be stored
-// (issuing again simply replaces the code).
+// setup-code and MFA-reset endpoints, whose responses are secrets that must
+// never be stored (issuing again simply replaces the code).
 
 const VIEW = { access: { kind: 'system', anyOf: ['user.view', 'user.manage'] } } as const
 const MANAGE = { access: { kind: 'system', anyOf: ['user.manage'] } } as const
@@ -142,27 +142,27 @@ export function registerAdminUserRoutes(app: FastifyInstance, options: { readonl
       })
   )
 
-  app.post(
-    '/api/admin/users/:id/setup-code',
-    {
-      config: MANAGE,
-      schema: {
-        params: idParams,
-        response: {
-          200: {
-            type: 'object',
-            properties: { setupCode: { type: 'string' }, expiresInHours: { type: 'integer' } },
-            required: ['setupCode', 'expiresInHours'],
-            additionalProperties: false
-          }
-        }
+  const setupCodeResponse = {
+    params: idParams,
+    response: {
+      200: {
+        type: 'object',
+        properties: { setupCode: { type: 'string' }, expiresInHours: { type: 'integer' } },
+        required: ['setupCode', 'expiresInHours'],
+        additionalProperties: false
       }
-    },
-    async (request) => {
-      const { id } = request.params as { id: number }
-      return db.transaction().execute((trx) => issueUserSetupCode(trx, auditContext(request), actorFrom(request), id))
     }
-  )
+  } as const
+
+  app.post('/api/admin/users/:id/setup-code', { config: MANAGE, schema: setupCodeResponse }, async (request) => {
+    const { id } = request.params as { id: number }
+    return db.transaction().execute((trx) => issueUserSetupCode(trx, auditContext(request), actorFrom(request), id))
+  })
+
+  app.post('/api/admin/users/:id/reset-mfa', { config: MANAGE, schema: setupCodeResponse }, async (request) => {
+    const { id } = request.params as { id: number }
+    return db.transaction().execute((trx) => resetUserMfa(trx, auditContext(request), actorFrom(request), id))
+  })
 
   app.post(
     '/api/admin/users/:id/end-sessions',

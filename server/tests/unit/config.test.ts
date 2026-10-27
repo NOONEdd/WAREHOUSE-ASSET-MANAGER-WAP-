@@ -4,6 +4,8 @@ import { ConfigError, describeDatabaseTarget, loadConfig, loadMigrationConfig } 
 const PASSWORD = 'S3cret-Pa55word'
 const URL_WITH_PASSWORD = `postgresql://wam_app:${PASSWORD}@db.internal:5432/wam`
 const ORIGIN = 'https://wam.example'
+const MFA_KEY_BYTES = Buffer.alloc(32, 0x5a)
+const MFA_KEY = MFA_KEY_BYTES.toString('base64')
 
 function problemsOf(fn: () => unknown): readonly string[] {
   try {
@@ -17,12 +19,15 @@ function problemsOf(fn: () => unknown): readonly string[] {
 
 describe('loadConfig', () => {
   it('accepts a minimal configuration and applies safe defaults', () => {
-    expect(loadConfig({ WAM_ENV: 'production', WAM_DATABASE_URL: URL_WITH_PASSWORD, WAM_PUBLIC_ORIGIN: ORIGIN })).toEqual({
+    expect(
+      loadConfig({ WAM_ENV: 'production', WAM_DATABASE_URL: URL_WITH_PASSWORD, WAM_PUBLIC_ORIGIN: ORIGIN, WAM_MFA_ENCRYPTION_KEY: MFA_KEY })
+    ).toEqual({
       environment: 'production',
       publicOrigin: ORIGIN,
       http: { host: '127.0.0.1', port: 3000 },
       database: { connectionString: URL_WITH_PASSWORD, poolMax: 10, statementTimeoutMs: 15_000 },
       sessions: { idleMinutes: 30, absoluteHours: 12 },
+      mfaEncryptionKey: MFA_KEY_BYTES,
       logLevel: 'info'
     })
   })
@@ -32,6 +37,7 @@ describe('loadConfig', () => {
       WAM_ENV: 'development',
       WAM_DATABASE_URL: URL_WITH_PASSWORD,
       WAM_PUBLIC_ORIGIN: 'http://localhost:5173',
+      WAM_MFA_ENCRYPTION_KEY: MFA_KEY,
       WAM_SESSION_IDLE_MINUTES: '15',
       WAM_SESSION_ABSOLUTE_HOURS: '8',
       WAM_HTTP_HOST: '0.0.0.0',
@@ -47,12 +53,13 @@ describe('loadConfig', () => {
     expect(config.sessions).toEqual({ idleMinutes: 15, absoluteHours: 8 })
   })
 
-  it('has no default environment, database or public origin: all three are required', () => {
+  it('has no default environment, database, public origin or MFA key: all four are required', () => {
     const problems = problemsOf(() => loadConfig({}))
-    expect(problems).toHaveLength(3)
+    expect(problems).toHaveLength(4)
     expect(problems[0]).toMatch(/^WAM_ENV is required/)
     expect(problems[1]).toMatch(/^WAM_DATABASE_URL is required/)
     expect(problems[2]).toMatch(/^WAM_PUBLIC_ORIGIN is required/)
+    expect(problems[3]).toMatch(/^WAM_MFA_ENCRYPTION_KEY is required/)
   })
 
   it('reports every invalid value at once', () => {
@@ -61,6 +68,7 @@ describe('loadConfig', () => {
         WAM_ENV: 'prod',
         WAM_DATABASE_URL: URL_WITH_PASSWORD,
         WAM_PUBLIC_ORIGIN: ORIGIN,
+        WAM_MFA_ENCRYPTION_KEY: MFA_KEY,
         WAM_HTTP_PORT: '70000',
         WAM_DB_POOL_MAX: '0',
         WAM_DB_STATEMENT_TIMEOUT_MS: '1e4',
@@ -87,7 +95,7 @@ describe('loadConfig', () => {
   ])('rejects a database URL with %s, without echoing the password', (_label, url, expected) => {
     let message = ''
     try {
-      loadConfig({ WAM_ENV: 'test', WAM_DATABASE_URL: url, WAM_PUBLIC_ORIGIN: ORIGIN })
+      loadConfig({ WAM_ENV: 'test', WAM_DATABASE_URL: url, WAM_PUBLIC_ORIGIN: ORIGIN, WAM_MFA_ENCRYPTION_KEY: MFA_KEY })
     } catch (err) {
       message = err instanceof Error ? err.message : ''
     }
@@ -96,8 +104,24 @@ describe('loadConfig', () => {
   })
 })
 
+describe('WAM_MFA_ENCRYPTION_KEY', () => {
+  const base = { WAM_ENV: 'production', WAM_DATABASE_URL: URL_WITH_PASSWORD, WAM_PUBLIC_ORIGIN: ORIGIN }
+
+  it.each([
+    ['too short', Buffer.alloc(16, 1).toString('base64')],
+    ['too long', Buffer.alloc(48, 1).toString('base64')],
+    ['not base64', `${'!'.repeat(43)}=`],
+    ['hex instead of base64', Buffer.alloc(32, 1).toString('hex')]
+  ])('rejects a key that is %s, without echoing it', (_label, value) => {
+    const problems = problemsOf(() => loadConfig({ ...base, WAM_MFA_ENCRYPTION_KEY: value }))
+    expect(problems).toHaveLength(1)
+    expect(problems[0]).toMatch(/^WAM_MFA_ENCRYPTION_KEY must be exactly 32 bytes/)
+    expect(problems[0]).not.toContain(value)
+  })
+})
+
 describe('WAM_PUBLIC_ORIGIN', () => {
-  const base = { WAM_DATABASE_URL: URL_WITH_PASSWORD }
+  const base = { WAM_DATABASE_URL: URL_WITH_PASSWORD, WAM_MFA_ENCRYPTION_KEY: MFA_KEY }
 
   it('is normalized to the bare origin', () => {
     expect(loadConfig({ ...base, WAM_ENV: 'production', WAM_PUBLIC_ORIGIN: 'https://WAM.Example:443' }).publicOrigin).toBe(

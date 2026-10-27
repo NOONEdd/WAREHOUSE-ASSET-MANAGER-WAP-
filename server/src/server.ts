@@ -32,6 +32,7 @@ export async function startServer(env: Env): Promise<RunningServer> {
       db,
       publicOrigin: config.publicOrigin,
       sessions: config.sessions,
+      mfaEncryptionKey: config.mfaEncryptionKey,
       logger: {
         level: config.logLevel,
         // Fastify's default request serializer logs no headers today; this
