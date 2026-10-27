@@ -17,7 +17,8 @@ stays in Git.
 | Commit | Content |
 |---|---|
 | `6ac697d` | O-06 script refuses unsafe input before reading any data; runbook clarified |
-| the commit containing this file | O-13 / E-18 evaluation harness (`tools/import-evaluation/`), evidence, desktop interim restrictions, register and status |
+| `8039708` | O-13 / E-18 evaluation harness (`tools/import-evaluation/`), evidence, desktop interim restrictions, register |
+| the commit containing this file | Verification results of `8039708` (this table) |
 
 Nothing was merged into `main`, tagged, released or deployed. No desktop file and no `server/` file changed
 (`git diff 9c3ac79 HEAD` touches only `docs/` and `tools/`).
@@ -54,7 +55,12 @@ work, no asset table and no migration-rehearsal database**.
 | Import evaluation, confirmation run under exactly those recorded limits (`--quick`, corpus extended to 87 cases) | **exit 0: 87/87 cases**; `load()` deterministic with intact text; four parallel parses ok; every isolation layer acted. Results: [`security/import-evaluation-results.md`](security/import-evaluation-results.md) |
 | `compare-unzipper.mjs` (streaming reader with `unzipper` 0.12.5 vs 0.10.14, 8 files) | exit 0: identical output for all 8 |
 | Dependency tree (`tools/import-evaluation`) | 88 lockfile entries, no install scripts, SHA-512 for all, every package licensed, `npm audit` 0; `npm audit signatures` **not verified** (endpoint unreachable) |
-| Repository suites (desktop `npm run verify`, server `npm run verify`, O-06 self-test) on a fresh clone of this commit | recorded in the next status commit |
+| Fresh clone of `8039708`, `npm ci --ignore-scripts` (root, `server/`, `tools/import-evaluation/`), non-root user, Node 24.22.1 | all three lockfiles unchanged |
+| Desktop `npm run verify` (env check, tests, build) | **exit 0**: 533/533 tests in 37 files; build OK. A first attempt failed 2 tests with `EACCES` because a stale root-owned file from an earlier run sat at the fixed path `/tmp/verify-export-test.xlsx` that `exportBannerLetterhead.test.js` writes to; re-run with a private `TMPDIR`: pass. (Observation: that test uses a fixed temp path; not changed — desktop code is out of scope.) |
+| Server `npm run verify` (typecheck, ESLint `strictTypeChecked`, tests, build), PostgreSQL 16.15 | **exit 0**: 323/323 tests in 17 files |
+| O-06 self-test (`tools/data-quality/test_o06_data_quality.py`) | passed: 34 statements, no synthetic value in the report, file unchanged, 6 unsafe inputs refused |
+| `npm audit` | `server/` 0, `tools/import-evaluation/` 0 |
+| Scope | `9c3ac79..8039708` touches only `docs/` and `tools/`; no `server/` file; the desktop's source and build configuration unchanged since `efbd65a` |
 
 ## Known limitations and risks
 
