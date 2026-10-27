@@ -1,6 +1,6 @@
 # Project status
 
-Snapshot: **2026-10-27, second session**. Replace this file's contents at the end of each work session; history
+Snapshot: **2026-10-27, third session** (in progress: slice 1B-2c). Replace this file's contents at the end of each work session; history
 stays in Git.
 
 ## Where things are
@@ -10,9 +10,9 @@ stays in Git.
 | `main` | `efbd65a9ca123c1ac03d464087628097671a0290` | yes (unchanged) | Desktop baseline |
 | tag `desktop-baseline-efbd65a` | tag object `6dd8a5dd58b3d43e78abdfe2113128b9947bf6b5` → `efbd65a9…` | **no** — this session cannot push tags; see [owner actions](#owner-actions) | Protects the baseline |
 | `phase-1a/repo-safety-net` | `c819994e80cfdc0262677b0e359eb14a5b9765cc` | yes | Phase 1A |
-| `ccr-1860034b-yp0csr` (session branch) | GitHub: `eeb25fe` (Phase 1B-1). **Locally ahead by the commits below** | **partly** — new commits await approval O-10 | Phase 1B-1 + 1B-2 |
+| `ccr-1860034b-yp0csr` (session branch) | GitHub: `1463f63` (pushed with approval O-10, verified). Newer commits are local only | yes, up to `1463f63` | Phase 1B-1 + 1B-2 (+ 1B-2c locally) |
 
-Commits made this session, local only until O-10 is approved:
+Commits pushed under O-10 (fast-forward from `eeb25fe`, no force, verified on GitHub):
 
 | Commit | Content |
 |---|---|
@@ -23,11 +23,13 @@ Commits made this session, local only until O-10 is approved:
 | the commit containing this file | Documentation of the verified result |
 
 Nothing was merged into `main`, tagged, released or deployed. No desktop file changed (verified with `git diff`).
+Commits made after `1463f63` (slice 1B-2c) are local and need a new push approval.
 
 ## Current phase
 
-**Phase 1B-2 (identity and access) — server side complete except MFA.** The next slice is **1B-2c, MFA**
-(decision O-07), then **1B-3** (asset schema and SQLite migration rehearsal).
+**Phase 1B-2c — multi-factor authentication** (decision O-07: mandatory for the owner and administrators,
+policy-configurable for all staff). Design, recovery and lockout safeguards written first:
+`security/identity-and-access.md` §3.2. Then **1B-3** (asset schema and SQLite migration rehearsal).
 
 ## Verification of this session (Linux sandbox; **nothing run on Windows**)
 
@@ -60,7 +62,8 @@ concurrency figure (unconfirmed).
 
 ## Known limitations (details: `security/identity-and-access.md` §8)
 
-1. **No MFA yet** — ASVS Level 2 requires it. Do not expose the server beyond a trusted network before 1B-2c.
+1. **MFA** — being implemented (1B-2c). Even then it is mandatory only for the owner and administrators until the
+   policy is set to all staff (O-11). Do not expose the server beyond a trusted network before that.
 2. **Deployment blocker:** behind a reverse proxy, `trustProxy` must be set to the proxy's address, or all users
    share one address for throttling.
 3. No breached-password check (offline list only); no general rate limit yet; audit trail not yet shipped off the
@@ -68,10 +71,9 @@ concurrency figure (unconfirmed).
 
 ## Owner actions
 
-1. **Approve the push (O-10)** of the commits above to the session branch. A Git bundle is provided as a backup.
-2. **Decide MFA scope (O-07):** owner and administrators only, or all staff?
-3. **Publish the baseline tag (O-02).** On your PC, in the repository folder, with `WAM_Phase1A_closure.bundle`
-   (changes your local Git and adds one tag on GitHub; nothing else):
+1. **Publish the baseline tag (O-02)** — a separate task you run locally; I perform no tag operation. On your PC, in
+   the repository folder, with `WAM_Phase1A_closure.bundle` (changes your local Git and adds one tag on GitHub;
+   nothing else):
    ```
    git fetch "PATH\TO\WAM_Phase1A_closure.bundle" refs/tags/desktop-baseline-efbd65a:refs/tags/desktop-baseline-efbd65a
    git rev-parse "desktop-baseline-efbd65a^{commit}"     # must print efbd65a9ca123c1ac03d464087628097671a0290
@@ -79,6 +81,8 @@ concurrency figure (unconfirmed).
    git ls-remote origin refs/tags/desktop-baseline-efbd65a   # must print 6dd8a5dd58b3d43e78abdfe2113128b9947bf6b5
    ```
    Then in GitHub → Settings → Rules, protect `main` (require a pull request) and protect tags `desktop-baseline-*`.
-4. **Tell staff:** in the desktop import screen choose *skip*, never *update*, for duplicates, until O-03 is fixed.
-5. When you can: D-02 (warehouse list, privately), D-03 (mapping source and reviewer), D-06 (approvals), and the
-   WSL2 readiness checks in the readiness sheet, T-5 (read-only).
+2. **Staff rule until O-03 is fixed and verified:** in the desktop import screen choose **Skip**, never **Update**,
+   for duplicate records.
+3. When you can: O-03 and O-04 (desktop fixes), D-02 (warehouse list, privately), D-03 (mapping source and
+   reviewer), D-06 (approvals), O-11 (when to require MFA for all staff), and the WSL2 readiness checks in the
+   readiness sheet, T-5 (read-only).

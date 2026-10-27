@@ -1,7 +1,8 @@
 # Identity, access and online-only operation — specification
 
 Status: **authoritative design** for Phase 1B-2 (2026-10-27); **implemented** in commits `b7632d3` and `fd0a5dc`
-(server/), verified as recorded in [`../STATUS.md`](../STATUS.md). Code must match this document; a change to either
+(server/), verified as recorded in [`../STATUS.md`](../STATUS.md). §3.2 (multi-factor authentication, decision O-07)
+was written before its implementation in slice 1B-2c. Code must match this document; a change to either
 needs the other updated in the same commit. Requirement IDs refer to **OWASP ASVS 5.0.0** (verified as the latest
 stable release from the OWASP/ASVS repository, `v5.0.0` tag; CSV SHA-256 `98c8fe91…df680`).
 
@@ -97,7 +98,7 @@ registered without a declaration **stops the server from starting** (fail closed
 
 | Topic | Rule |
 |---|---|
-| Pathways (V6.1.3, V6.3.4) | Exactly two: username + password login; one-time **setup code** + new password (initial activation and resets). MFA is added in slice 1B-2c (decision O-07). |
+| Pathways (V6.1.3, V6.3.4) | Exactly two ways to obtain a session: username + password, followed — whenever §3.2 applies — by a **second factor** (an authenticator-app code or a recovery code). A one-time **setup code** + new password (initial activation and resets) only sets a password; it never creates a session and never bypasses the second factor (V6.4.3). |
 | Usernames | 3–64 characters, lower-case `a-z 0-9 . _ -`, unique. Persian full names go in the display name. Reserved: `admin`, `administrator`, `root`, `sa`, `system`, `superuser`, `owner`, `test`, `guest`, `wam` (V6.3.2). |
 | Password length | **15–128 characters** (V6.2.1 recommends ≥ 15; NIST SP 800-63B requires 15 when the password is the only factor). Any characters allowed, no composition rules (V6.2.5), checked exactly as typed (V6.2.8), no forced periodic change (V6.2.10). |
 | Common passwords (V6.2.4) | Rejected (case-insensitive) if on the bundled list: **11,146** passwords of 15–128 characters from two frequency-ordered public lists (`server/data/README.md`). Works offline. |
@@ -105,7 +106,7 @@ registered without a declaration **stops the server from starting** (fail closed
 | Breached passwords (V6.2.12) | **Not implemented**: online breach services cannot be relied on from the deployment network. Partially covered by the common-password list. Documented gap. |
 | Storage (V11.4.2) | Argon2id, memory 19 MiB, 2 passes, parallelism 1, 16-byte random salt (OWASP Password Storage Cheat Sheet minimum), via Node's built-in `crypto.argon2`. Parameters are stored with each hash so they can be raised later; hashes with old parameters are upgraded at the next successful login. |
 | Unknown users | A login for an unknown, disabled or not-yet-activated account does the same Argon2id work and returns the same `INVALID_CREDENTIALS`, so responses do not reveal which usernames exist. |
-| Setup codes (V6.4.1) | 256-bit random, shown once, stored only as SHA-256, valid **24 hours**, single use, replaced when a new one is issued. Issuing one **clears the password and ends all sessions** (a reset is a reset). They never become the long-term password: the user chooses their own. |
+| Setup codes (V6.4.1) | 160-bit random (32 base32 characters), shown once, stored only as SHA-256, valid **24 hours**, single use, replaced when a new one is issued. Issuing one **clears the password and ends all sessions** (a reset is a reset); it does **not** remove the second factor. They never become the long-term password: the user chooses their own. |
 | Password change (V6.2.2, V6.2.3) | Requires the current password; ends all other sessions of that user. |
 | No hints or secret questions (V6.4.2) | None exist. |
 
@@ -124,6 +125,126 @@ permanently, and the per-address limit stops one address from blocking many acco
 `npm run owner -- recover` clears the owner's counters. The source address is the TCP peer until a reverse proxy is
 configured (Phase 1E; ASVS V15.3.4).
 
+### 3.2 Multi-factor authentication (decision O-07; ASVS V6.3.3, V6.4, V6.5)
+
+Written before the implementation (slice 1B-2c), as the owner required; the code must match it.
+
+#### 3.2.1 Who must use it
+
+| Account | Second factor |
+|---|---|
+| The owner | **Always required.** |
+| Administrators (anyone holding an active system profile) | **Always required.** |
+| Anyone who has enrolled an authenticator | Always used at sign-in — enrolling cannot be bypassed later. |
+| All other users | Required when the **security policy** says `all_users`; otherwise optional (self-service enrolment). |
+
+The policy is a single setting, changed by the **owner only** in the admin panel and audited. It has exactly two
+values: `privileged` (the default and the **minimum**) and `all_users`. There is no value that makes the second factor
+optional for the owner or administrators; the database refuses any other value (`CHECK`), and a missing policy row is
+treated as `all_users` (fail closed).
+
+**Enforced on every request, not only at sign-in.** Each session records whether it was established with a second
+factor. If an account that now requires one (for example, a user who was just appointed administrator, or everybody
+after the policy changed to `all_users`) uses a session that was not, that session is ended at once, the event is
+audited, and the response is `401 MFA_REQUIRED`: the user signs in again and completes the second step. Administrator
+rights are therefore never usable from a password-only session.
+
+#### 3.2.2 The factor: authenticator-app codes (TOTP)
+
+| Topic | Rule |
+|---|---|
+| Method | Time-based one-time passwords, RFC 6238: any standard authenticator app on a phone (no network needed on the phone). **No SMS and no e-mail codes** (V6.6.1, V6.3.6): no telephone or mail dependency, which also suits sites with unreliable connectivity. |
+| Parameters (E-13) | HMAC-SHA-1, 6 digits, 30-second steps — the combination every authenticator app supports. HMAC-SHA-1 with a 160-bit key remains a sound keyed hash; SHA-1 collisions do not affect HMAC. |
+| Secret (V6.5.3) | 160 bits from the operating system's CSPRNG (`crypto.randomBytes`), shown once during setup as a QR-code link (`otpauth://`) and as text for manual entry. |
+| Time source (V6.5.8) | The server's clock only (kept by NTP on the server); a client-supplied time is never used. |
+| Tolerance (V6.5.5) | The current 30-second step plus **one step before and one after**, to absorb small clock differences between phone and server. Taken literally, V6.5.5 allows no tolerance; this is a recorded deviation (E-13), bounded by single use and the failure lock below. |
+| Single use (V6.5.1) | The server stores the last step accepted per user and accepts only later steps, inside a row lock: the same code can never be used twice, not even by two simultaneous requests. |
+| Storage (V11.3.2, V11.3.3, V13.3.1) | The secret is encrypted with **AES-256-GCM** (authenticated encryption) under a key that is **not in the database**: `WAM_MFA_ENCRYPTION_KEY` (32 random bytes, base64) in the server's environment. The user id is bound in as associated data, so an encrypted secret copied onto another account fails to decrypt. A key fingerprint is stored with each secret, so a wrong key is reported as a server configuration error, never counted against the user. A stolen database backup alone yields no usable secret. The server refuses to start without a valid key. |
+
+#### 3.2.3 Recovery codes (lookup secrets)
+
+10 codes are issued when an authenticator is enrolled (and when the user regenerates them): each 120 bits
+(24 base32 characters, shown in groups of four), **shown once**, stored only as SHA-256 (V6.5.2 allows a standard hash
+at ≥ 112 bits; V6.5.4), **single use** (marked used atomically). A recovery code replaces the authenticator code at
+sign-in when the phone is unavailable. Regenerating invalidates all earlier codes. The user is told how many remain
+after each use. Users should keep them somewhere safe away from the phone, such as a password manager or a sealed
+envelope; this is personal safekeeping, not a business workflow (D-05).
+
+#### 3.2.4 Sign-in, enrolment and changes
+
+**Sign-in.** A correct password for an account that needs a second factor does **not** create a session. The server
+answers `202` with `next: "mfa_verify"` (enrolled) or `next: "mfa_enroll"` (required but not yet enrolled), and sets a
+short-lived second-step cookie (`__Host-wam_mfa`, `HttpOnly; Secure; SameSite=Strict`, a random 256-bit reference
+stored as SHA-256, valid **5 minutes** for verification and **10 minutes** for enrolment, E-17, one at a time per
+user). Only then:
+
+- `POST /api/auth/mfa/verify` with an authenticator code or a recovery code creates the session;
+- `POST /api/auth/mfa/enroll/start` and `…/enroll/confirm` let a user who must enrol do so before the first session:
+  the secret is held as a pending enrolment for 10 minutes and becomes active only when a code from the app proves the
+  app was set up correctly. The confirmation returns the recovery codes and creates the session.
+
+A password-only session is never created for an account that needs a second factor. Accounts that need none sign in
+as before (`200`).
+
+**Self-service** (signed-in user; ASVS V7.5.1, full re-authentication before changing MFA settings):
+
+| Action | Requires |
+|---|---|
+| Enrol an authenticator (when none is enrolled) | current password |
+| Replace the authenticator (new phone) | current password **and** a current code (authenticator or recovery code) |
+| Regenerate recovery codes | current password and a current code |
+| Remove MFA | current password and a current code; **refused** while the account requires MFA (§3.2.1) |
+
+Enrolling, replacing or removing ends the user's **other** sessions (a credential change, V7.4.3).
+
+**Administrator reset** (`POST /api/admin/users/:id/reset-mfa`, `user.manage`, rules A2–A4: nobody resets their own,
+only the owner resets an administrator, nobody resets the owner): removes the authenticator and recovery codes **and at
+the same time** clears the password, ends all sessions and issues a new setup code. The person proves their identity
+to the administrator the same way as at account creation — in person or by a telephone call to a known number — and
+receives the setup code that way (V6.4.4). Someone who knows only the old password therefore cannot enrol their own
+authenticator after a reset.
+
+**Password reset** (setup code, §3) keeps the authenticator: after setting the new password the user still needs the
+second factor (V6.4.3).
+
+#### 3.2.5 Account-lockout safeguards
+
+| Risk | Safeguard |
+|---|---|
+| Guessing authenticator codes | Only reachable after the correct password. **10 consecutive wrong codes** (authenticator or recovery, at sign-in or in self-service re-authentication) lock second-factor sign-in for the account (E-14); a correct code resets the count. The chance of guessing within 10 tries is about 3 in 100,000. The lock is audited (`auth.mfa.locked`). |
+| Malicious lockout of a user | The lock can only be triggered by someone who **already knows the password** — that is, when the password is compromised and must be reset anyway. Password-step throttling keeps its sliding 15-minute windows (§3.1); nothing there locks permanently. |
+| Unlocking | A **password reset** clears the lock: an administrator issues a setup code (or performs an MFA reset); for the owner, `npm run owner -- recover`. The attacker loses the password at the same time. |
+| User lost the phone | Sign in with a recovery code, then replace the authenticator. Without recovery codes: administrator reset (§3.2.4). |
+| Administrator locked out | The owner resets them in the admin panel. Administrators cannot reset each other (A2). |
+| **Owner locked out** | The owner can never be locked out of the system as a whole: `npm run owner -- recover --yes` (new password, lock cleared, authenticator kept) or `npm run owner -- recover --reset-mfa --yes` (also removes the authenticator; the owner enrols again at the next sign-in, after setting the new password with the setup code). Both need operating-system access to the server **and** the migration credentials — the two-person break-glass control of §1 — and both are audited. |
+| Encryption key lost or wrong | Authenticator codes cannot be checked; the server logs a configuration error and refuses second-factor sign-in rather than skipping it. Recovery: restore the key from its backup. If it is truly lost, every enrolled user must be reset (owner by CLI with `--reset-mfa`, then the owner resets the others). **The key must be backed up, separately from the database backups** (Phase 1D). |
+| Server clock wrong | Codes fail for everyone. The server must keep time by NTP (Phase 1E deployment checklist); the ±1-step tolerance absorbs small drift. |
+| Half-finished enrolment | A pending enrolment expires after 10 minutes and changes nothing until confirmed with a valid code; an abandoned one leaves the account as it was. |
+
+#### 3.2.6 Residual risks (accepted, visible)
+
+- **First enrolment trusts the password.** Someone who knows a user's password before that user enrols could enrol
+  their own authenticator. Safeguards: the owner enrols in the same sitting as the bootstrap; resets always include a
+  new password via a setup code; every enrolment is audited and the user list shows who has enrolled. Recommended
+  practice: appoint administrators only after they have enrolled.
+- Real-time phishing (a fake page relaying codes) is not stopped by TOTP; phishing-resistant authenticators
+  (FIDO2/passkeys) are an ASVS Level 3 measure and a possible later addition.
+- No automatic notification of suspicious sign-ins (V6.3.5, Level 3); the audit trail records them.
+
+### 3.3 Cryptographic inventory (ASVS V11.1.2)
+
+| Purpose | Algorithm | Key / secret | Where |
+|---|---|---|---|
+| Password storage | Argon2id (19 MiB, t = 2, p = 1), 16-byte salt | — | `auth/passwords.ts` |
+| Session tokens, second-step tokens, setup codes, recovery codes at rest | SHA-256 of ≥ 120-bit random values | — | `auth/secrets.ts` |
+| Authenticator codes | HMAC-SHA-1 (RFC 6238) | 160-bit per-user secret | `auth/totp.ts` |
+| Authenticator secrets at rest | AES-256-GCM, 96-bit random nonce, user id as associated data | `WAM_MFA_ENCRYPTION_KEY` (environment; vault in Phase 1E) | `auth/secretBox.ts` |
+| All random values | Node `crypto.randomBytes` (operating-system CSPRNG) | — | — |
+| Transport | TLS 1.2+ at the reverse proxy | certificate | Phase 1E |
+
+Key rotation for `WAM_MFA_ENCRYPTION_KEY` (V11.2.2) is not implemented yet: the stored key fingerprint makes it
+possible, and a re-encryption command is planned with the deployment work (Phase 1E; limitation L-8).
+
 ## 4. Sessions (ASVS V7)
 
 | Topic | Rule |
@@ -133,6 +254,7 @@ configured (Phase 1E; ASVS V15.3.4).
 | Lifetime (V7.1.1, V7.3.1, V7.3.2) | Idle timeout **30 minutes**, absolute lifetime **12 hours** (one working day), configurable within 5–240 minutes and 1–24 hours. These equal the AAL2 re-authentication limits of NIST SP 800-63B revision 3 (12 hours; 30 minutes of inactivity) as I recall them; the text of the current revision was not re-read in this session. |
 | Concurrent sessions (V7.1.2) | At most **5** per user; a new login ends the oldest. |
 | New login (V7.2.4) | Always a new token; a session cookie sent with the login request is ended first. |
+| Assurance | Each session records whether a second factor was used. A session that lacks one for an account that requires it (§3.2.1) is ended at its next request (`401 MFA_REQUIRED`). |
 | Termination (V7.4.1–7.4.3, V7.4.5, V7.5.2) | Logout ends the session server-side. Disabling a user, issuing a setup code and completing a setup end **all** of that user's sessions; a password change ends all **other** sessions. Administrators can end a user's sessions (rule A2 applies); the owner CLI can end everyone's. Users can list their sessions and end the others after re-entering their password. |
 
 ## 5. Request forgery protection (ASVS V3.5.1, V3.5.3)
@@ -192,7 +314,10 @@ Events in Phase 1B-2: login succeeded/failed/throttled, logout, password changed
 ended, user created/updated/disabled/enabled, setup code issued, access changed (one event per affected warehouse,
 plus one for system profiles), profile created/updated/deleted, job title created/updated, warehouse
 created/updated, owner bootstrapped/recovered/transferred, all sessions ended, authorization denied, request-forgery
-check failed.
+check failed. From 1B-2c: password accepted and second step requested, second factor failed, second factor locked,
+authenticator enrolled/replaced/removed, recovery codes regenerated, MFA reset by an administrator, session ended
+because MFA became required, security policy changed. **Never recorded:** authenticator secrets or codes, recovery
+codes.
 
 Who can read it: `audit.view_all` sees everything; `audit.view` in a warehouse sees that warehouse's events only.
 Shipping the audit trail to a separate system (V16.4.3) is a Phase 1D/1E task.
@@ -201,10 +326,12 @@ Shipping the audit trail to a separate system (V16.4.3) is a Phase 1D/1E task.
 
 | # | Limitation | Consequence | Resolution |
 |---|---|---|---|
-| L-1 | **No multi-factor authentication yet** (ASVS V6.3.3, Level 2) | Passwords are the only factor | Slice 1B-2c (decision O-07). **Do not expose the server beyond a trusted network before it exists.** |
+| L-1 | **MFA is mandatory only for the owner and administrators by default** (ASVS V6.3.3, Level 2, expects it for every user) | Ordinary users sign in with a password alone while the policy is `privileged` | The owner switches the policy to `all_users` (decision O-11). **Do not expose the server beyond a trusted network before that.** |
 | L-2 | **`trustProxy` is off** | Behind a reverse proxy every client would appear as the proxy's address: the per-address throttle would then affect all users together | Configure the proxy's address before deployment (Phase 1E). **Deployment blocker.** |
 | L-3 | No breached-password check (V6.2.12) | Only the bundled common-password list protects | Accepted for now: online breach services are unreliable from the deployment network |
 | L-4 | No general rate limit (V2.4.1) | A flood of refused requests also fills the audit trail | Proxy rate limits (1E); application limits with the asset APIs |
-| L-5 | The setup-code endpoint answers an unknown username slightly faster than a known one | Username probing, limited to 20 attempts per address per 15 minutes | Accepted; revisit with MFA (1B-2c) |
+| L-5 | The setup-code endpoint answers an unknown username slightly faster than a known one | Username probing, limited to 20 attempts per address per 15 minutes | Accepted (V6.3.8 is Level 3); MFA protects accounts even if a username is learned |
 | L-6 | Two non-owner administrators could grant each other warehouse access | Collusion, visible in the audit trail | Accepted (§2.3); the owner can keep `user.manage` to themselves |
 | L-7 | Audit trail kept only in the application database (V16.4.3) | A database-level compromise could alter history | Ship to a separate store in Phase 1D/1E |
+| L-8 | No rotation command for `WAM_MFA_ENCRYPTION_KEY` (V11.2.2) | Changing the key requires resetting every enrolled user | Re-encryption command in Phase 1E; the key fingerprint stored with each secret already allows it |
+| L-9 | TOTP is not phishing-resistant | A real-time relay page could capture a code | Accepted for Level 2; FIDO2/passkeys are a possible later addition (§3.2.6) |
