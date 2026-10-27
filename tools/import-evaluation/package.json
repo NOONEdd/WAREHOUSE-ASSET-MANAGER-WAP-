@@ -1,0 +1,23 @@
+{
+  "name": "wam-import-evaluation",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Evaluation only (decisions D-15, O-13, E-18): spreadsheet parsing under isolation and limits, on synthetic files. Not part of the web server or the desktop app; never installed by their builds.",
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "evaluate": "node run-evaluation.mjs"
+  },
+  "dependencies": {
+    "csv-parse": "7.0.3",
+    "exceljs": "4.4.0"
+  },
+  "overrides": {
+    "exceljs": {
+      "unzipper": "0.12.5",
+      "uuid": "11.1.1"
+    }
+  }
+}

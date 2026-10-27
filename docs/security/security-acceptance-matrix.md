@@ -116,9 +116,9 @@ run of the built server as real processes.
 
 | ASVS | Requirement | Status |
 |---|---|---|
-| 5.1.1, 5.2.1–5.2.3, 5.3.2, 5.3.3 | File types, size and unpacked size documented and enforced; archive checks before unpacking; no user-supplied paths | **Planned 1B-3** — designed in the D-15 review §4 (4.2–4.4, 4.13); decision D-15 (server) |
+| 5.1.1, 5.2.1–5.2.3, 5.3.2, 5.3.3 | File types, size and unpacked size documented and enforced; archive checks before unpacking; no user-supplied paths | **Evaluated, not in the server yet (1B-3)** — E-18 ceilings set by the owner; pre-check and boundary tests on synthetic files pass (import-evaluation §3–§4); enforcement in `server/` comes with 1B-3 |
 | 15.1.1, 15.1.2, 15.2.1 | Remediation time frames; component inventory; components within time frames | **Partial** — server dependencies pinned with a lockfile, `npm audit` 0; time frames proposed (E-18); no SBOM file yet. Desktop dependencies outside this scope (T-6, D-15 desktop scope) |
-| 15.1.3, 15.2.2, 15.1.4, 15.2.5 | Resource-demanding functionality and risky components documented and contained | **Planned 1B-3** — spreadsheet parsing documented as resource-demanding and ExcelJS as a risky component; isolated worker with limits (D-15 review §3.1, §4.1, §4.5) |
+| 15.1.3, 15.2.2, 15.1.4, 15.2.5 | Resource-demanding functionality and risky components documented and contained | **Evaluated, not in the server yet (1B-3)** — ExcelJS documented as a risky component; confined child process with kernel, heap, watchdog and time limits, no writes, no network, measured memory limit (import-evaluation §3, §5); a worker thread was shown to be insufficient |
 | 12.x | TLS 1.2+/1.3, trusted certificates | **Planned 1E** |
 | 14.x | Encrypted backups, restore drill | **Planned 1D** (decision O-08) |
 | — | Spreadsheet/CSV formula injection on export | **Planned 1C** |

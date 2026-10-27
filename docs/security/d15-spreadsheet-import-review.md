@@ -1,7 +1,9 @@
 # D-15 — Spreadsheet parsing on the web server: decision, dependency review and required controls
 
-Date: 2026-10-27. Status: **decision recorded; dependency review done; not adopted yet.** No package has been added
-to `server/package.json`. Adoption happens in Phase 1B-3, after the 1B-3 gate (STATUS), with the controls below.
+Date: 2026-10-27. Status: **decision recorded; dependency review done; evaluated on synthetic files (O-13, E-18);
+not adopted yet.** No package has been added to `server/package.json`. Adoption happens in Phase 1B-3, after the 1B-3
+gate (STATUS), with the controls below **as corrected by the evaluation**:
+[`import-evaluation.md`](import-evaluation.md). Where this review and the evaluation differ, the evaluation is current.
 
 ## 1. Decision and scope
 
@@ -9,11 +11,10 @@ to `server/package.json`. Adoption happens in Phase 1B-3, after the 1B-3 gate (S
 with a **strict CSV parser**, subject to this dependency review and the security controls in section 4. The server
 never uses `xlsx@0.18.5` (review F-5).
 
-**Scope:** server-side parsing only. D-15's original Phase 0 text is not in this repository; earlier documents call
-it "D-15 (`xlsx` handling)" in the context of the **desktop** app's dependency. Whether D-15 also covered the desktop
-is **unresolved** and recorded separately (decision register, "D-15 (desktop scope)"). Nothing in this decision changes
-desktop code or dependencies; replacing the desktop's `xlsx@0.18.5` is a separate task needing its own approval and a
-Windows verification.
+**Scope (confirmed by the owner, 2026-10-27): server-side parsing only.** Replacing the desktop's `xlsx@0.18.5` is
+separate work with its own approval, done before any new desktop release; until then the interim rules in
+[`desktop-workbook-interim-restrictions.md`](desktop-workbook-interim-restrictions.md) apply. Nothing in this decision
+changes desktop code or dependencies.
 
 ## 2. Selected versions (verified 2026-10-27 on the npm registry)
 
@@ -34,7 +35,9 @@ How verified: `npm view <package> version time license dependencies`; `npm insta
 
 ### 3.1 Dependency tree
 
-- **194 packages** in total (ExcelJS brings 193, `csv-parse` 1). **No install scripts.**
+- **194 packages** in total (ExcelJS brings 193, `csv-parse` 1). **No install scripts.** *(Superseded by O-13: with
+  the explicit override `unzipper@0.12.5` the lockfile has 88 entries and no package without a licence —
+  [`import-evaluation.md`](import-evaluation.md) §2.)*
 - Licences: MIT 172, ISC 13, Apache-2.0 2, BSD-3-Clause 2, MIT/X11 1, (MIT AND Zlib) 1 (`pako`), Unlicense 1
   (`big-integer`, public domain), (MIT OR GPL-3.0-or-later) 1 (`jszip`; used under MIT), and **one package without any
   licence: `buffers@0.1.1`** (no licence field, no licence text in the package). Without a licence there is no granted
@@ -77,18 +80,19 @@ How verified: `npm view <package> version time license dependencies`; `npm insta
   max_record_size: 4096`: a UTF-8 BOM is accepted; `00123` and `۰۱۲` stay exactly as written; an unclosed quote
   (`CSV_QUOTE_NOT_CLOSED`), a row with too many columns (`CSV_RECORD_INCONSISTENT_COLUMNS`) and a stray quote
   (`INVALID_OPENING_QUOTE`) are rejected.
-- **Not verified yet:** saxes' handling of DTDs and entity expansion (XXE, "billion laughs"), ExcelJS's behavior on
-  malformed or hostile workbooks. These are part of the 1B-3 test corpus (4.13).
+- **Since verified** (evaluation, synthetic corpus): saxes refuses DTD-based entities; DTDs are refused before
+  parsing anyway. ExcelJS needs additional controls on hostile and on ordinary files (range expansion, falsy formula
+  results, merged cells, unanchored part names): [`import-evaluation.md`](import-evaluation.md) §3 and §6.
 
 ## 4. Required controls (implemented and tested in 1B-3; ASVS 5.0.0 IDs)
 
 | # | Requirement | Design |
 |---|---|---|
-| 4.1 | Isolation (V15.2.5, V15.2.2) | Parsing runs in a **separate worker** (`node:worker_threads` with `resourceLimits` on heap, young generation and stack), receives the upload as a buffer and returns plain JSON rows. No file-system or network access in the parser code path; no temporary files (`xlsx.load(buffer)` needs none). The worker is terminated on any limit breach. A separate child process is the fallback if worker limits prove insufficient in tests. |
-| 4.2 | File size (V5.2.1, V5.1.1) | Upload limit **10 MB** (configurable), enforced while the request body streams in, before any parsing (`413`). |
+| 4.1 | Isolation (V15.2.5, V15.2.2) | **Corrected by the evaluation:** a worker thread is **not** sufficient (its limit does not cover Buffers — measured). Parsing runs in a **separate, confined child process** per file: kernel memory limit, V8 heap ceiling, resident-memory watchdog, 30 s kill, no file writes, no child processes, no network, empty environment; it receives the upload on stdin and returns typed rows. Evaluation §3. |
+| 4.2 | File size (V5.2.1, V5.1.1) | Upload limit **10 MiB** (E-18), enforced while the request body streams in, before any parsing (`413`), and again by the parser process. |
 | 4.3 | Type (V5.2.2) | Extension `.xlsx` or `.csv`, **and** content check: `.xlsx` must be a ZIP (magic bytes `PK\x03\x04`) containing `[Content_Types].xml` and `xl/workbook.xml`; `.csv` must be valid UTF-8 text without NUL bytes. Legacy `.xls` and `.xlsm` are refused. |
-| 4.4 | Decompressed content (V5.2.3, V5.3.3) | **Before** unzipping, the ZIP central directory is read and checked: at most 200 entries, declared uncompressed total ≤ 100 MB and per entry ≤ 50 MB, compression ratio ≤ 100:1, no encrypted entries, no absolute paths, no `..`, no symlinks, no nested archives. The worker's memory limit is the backstop against false declarations. Entry paths are never used to create files. |
-| 4.5 | Rows, columns, time (V15.1.3, V2.3.2) | At most **20,000 data rows**, **60 columns**, **10,000 characters per cell**, one worksheet (named or first); wall-clock limit **30 s** per parse. Exceeding any limit rejects the file with a clear message; nothing partial is kept. |
+| 4.4 | Decompressed content (V5.2.3, V5.3.3) | **Owner values (E-18):** at most **1,000** entries, **100 MiB** decompressed in total. Checked from the central directory, then every entry is inflated with a hard cap at its declared size and its CRC verified, so a false declaration fails before the parser runs; no encrypted entries, absolute paths, `..`, symlinks, ZIP64 or macros; DTDs refused. Entry paths are never used to create files. Evaluation §3–§4. |
+| 4.5 | Rows, columns, time (V15.1.3, V2.3.2) | **Owner values (E-18):** **20** worksheets, **50,000** rows and **1,000,000** cells in total, **100** columns per worksheet, **30 s** per file; upload **10 MiB**. Plus the derived controls of evaluation §4 (range budget, grid, shared strings, cell formats; text over 32,767 characters flagged). Exceeding any ceiling rejects the file with a message naming it; nothing partial is kept. |
 | 4.6 | Validation (V2.2.1–V2.2.3) | Every value validated against the import schema at the server (allow-lists for statuses and lookups, lengths, date rules); formulas are never evaluated (formula cells are flagged; their cached value is shown, never trusted silently); error cells are rejected. |
 | 4.7 | Leading zeros and Persian text | Identifiers (code, serial) are read as **text**: a text cell as-is; a numeric cell via its formatted text and **flagged** ("numeric cell — leading zeros may already be lost in the file"). CSV with `cast: false`. Input must be UTF-8 (strict decoding; anything else is rejected with "save as CSV UTF-8"). Values are stored exactly as written; Persian/Arabic digit and letter normalization is used **only** to detect duplicates. |
 | 4.8 | Preview, row-level results, explicit confirmation (V2.3.1) | Staged import: upload → parse → an import batch with per-row results (valid, warning, error) → preview → the user confirms → only then are assets written. Nothing touches assets before confirmation; a batch can be confirmed once. |
@@ -101,9 +105,10 @@ How verified: `npm view <package> version time license dependencies`; `npm insta
 
 ## 5. Open items before adoption
 
-1. **`buffers@0.1.1` has no licence.** Options: (a) find and record the upstream licence; (b) replace it through an
-   npm override with a licensed equivalent, if one is API-compatible; (c) choose a different `.xlsx` reader. Needs a
-   decision before ExcelJS is installed in `server/`.
-2. **D-15 (desktop scope)** — whether the desktop's `xlsx@0.18.5` is replaced, and how; separate approval.
-3. Concrete limit values in section 4 are proposals (engineering default E-18); confirm them against the O-06
-   assessment (row counts, column counts, field lengths).
+1. ~~`buffers@0.1.1` has no licence~~ — **resolved by the explicit override `unzipper@0.12.5` (O-13)**, tested for
+   compatibility; [`import-evaluation.md`](import-evaluation.md) §2. Adoption of ExcelJS itself is still your decision.
+2. ~~D-15 (desktop scope)~~ — **settled**: server only; desktop replacement is separate work before a new desktop
+   release; interim restrictions documented.
+3. ~~Concrete limit values~~ — **set by you (E-18)** and boundary-tested; the memory limit is derived from
+   measurement. Re-check against the O-06 assessment (row and column counts, field lengths) and re-measure on the
+   target server before import is switched on.
