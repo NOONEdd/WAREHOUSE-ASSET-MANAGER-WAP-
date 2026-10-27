@@ -12,7 +12,9 @@ way the runbook does — opened read-only and immutable — and checks:
     username, person name, note, lookup name or the file path, and every text
     value it prints from the data is one of the kinds the script's header lists;
   * the counts the script reports match the planted problems;
-  * the script stops at once when the file still has the live name.
+  * the script stops at once — before reading any data — when query_only is off,
+    when the file still has the live name, when it lies in an application-data
+    folder, or when it is not a WAM desktop database.
 
 Run (Python 3.9+, standard library only):  python3 -I tools/data-quality/test_o06_data_quality.py
 """
@@ -121,11 +123,11 @@ def code_of(statement: str) -> str:
     return '\n'.join(l for l in statement.splitlines() if not l.strip().startswith('--')).strip()
 
 
-def run(path: pathlib.Path):
+def run(path: pathlib.Path, script: str | None = None):
     uri = f'file:{path.as_posix()}?mode=ro&immutable=1'
     db = sqlite3.connect(uri, uri=True)
     results = []
-    for statement in statements(SCRIPT.read_text(encoding='utf-8')):
+    for statement in statements(script if script is not None else SCRIPT.read_text(encoding='utf-8')):
         code = code_of(statement)
         head = code.split(None, 1)[0].upper()
         assert head in ('SELECT', 'WITH') or code == 'PRAGMA query_only = ON;', f'not read-only: {code[:60]}'
@@ -223,16 +225,31 @@ def main() -> int:
         assert broken == [('assets', 'workshops', 1)], broken
         assert results[-1][2] == [('end of report', 1)]
 
-        # The guard: a file still named like the live database stops the run at once.
+        # The refusals: each stops the run at its own check, before any data is read.
+        def refused(path: pathlib.Path, script: str | None = None) -> str:
+            try:
+                run(path, script)
+            except sqlite3.OperationalError as err:
+                assert '$ STOP:' in str(err), err
+                return str(err)
+            raise AssertionError(f'not refused: {path}')
+
         live = work / 'asset-warehouse.db'
         shutil.copy(copy, live)
-        try:
-            run(live)
-            raise AssertionError('the live-name guard did not stop the script')
-        except sqlite3.OperationalError as err:
-            assert 'integer overflow' in str(err), err
+        assert 'named like the live desktop database' in refused(live)
+        for folder in ('Users/someone/AppData/Roaming/wam', 'home/someone/.config/wam', 'Users/someone/Library/Application Support/wam'):
+            inside = work / folder / 'wam-copy.db'
+            inside.parent.mkdir(parents=True)
+            shutil.copy(copy, inside)
+            assert 'inside an application-data folder' in refused(inside), folder
+        other = work / 'other.db'
+        sqlite3.connect(other).execute('CREATE TABLE something_else (x)').connection.commit()
+        assert 'not a WAM desktop database' in refused(other)
+        without_guard = SCRIPT.read_text(encoding='utf-8').replace('PRAGMA query_only = ON;', '', 1)
+        assert 'query_only is off' in refused(copy, without_guard)
+        assert hashlib.sha256(copy.read_bytes()).hexdigest() == before, 'database file changed by the refusal runs'
 
-        print(f'o06 self-test passed: {len(results)} statements, report free of {len(SENSITIVE)} synthetic values, file unchanged')
+        print(f'o06 self-test passed: {len(results)} statements, report free of {len(SENSITIVE)} synthetic values, file unchanged, 6 unsafe inputs refused')
         return 0
     finally:
         shutil.rmtree(work, ignore_errors=True)

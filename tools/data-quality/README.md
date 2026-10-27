@@ -2,12 +2,16 @@
 
 Decision **O-06, option B** (2026-10-27): the owner runs a reviewed, read-only, aggregate-only script on their own
 PC, against a **copy** of the desktop database, inspects the output, and decides what may be shared. Nobody else
-touches the real data. The results inform the Phase 1B-3 schema and migration rehearsal.
+touches the real data, and the database itself is never sent anywhere. The results inform the Phase 1B-3 schema and
+migration rehearsal.
+
+**Gate status: O-06 script prepared and synthetically tested; owner-side assessment pending.** Phase 1B-3 does not
+start until you have run it and the aggregate report you approve has been reviewed.
 
 | File | What it is |
 |---|---|
 | `o06-data-quality.sql` | The script. **Review it before running it.** SELECT statements and read-only PRAGMA functions only. |
-| `test_o06_data_quality.py` | Self-test on a synthetic database built from the desktop schema (optional to run, Python 3.9+, standard library only). |
+| `test_o06_data_quality.py` | Self-test on a synthetic database built from the desktop schema (optional to run, Python 3.10+, standard library only). |
 
 ## Safety properties — check them while reviewing
 
@@ -15,8 +19,11 @@ touches the real data. The results inform the Phase 1B-3 schema and migration re
   writes nothing, not even journal side files); the script's first statement sets `PRAGMA query_only = ON`, so SQLite
   refuses any write on that connection; and the script contains no `INSERT`, `UPDATE`, `DELETE`, `CREATE`, `DROP`,
   `ALTER`, `ATTACH`, `VACUUM` or `REINDEX`.
-- **Never the live database.** It stops at its first query if the file is still named `asset-warehouse.db` (the
-  desktop app's live file). Work only on a renamed copy of a backup.
+- **Refuses unsafe input before reading any data.** It stops with a message starting `$ STOP:` when `query_only` is
+  off (a modified script), when the file is still named `asset-warehouse.db` (the desktop app's live file), when it
+  lies in an application-data folder (`AppData`, `.config`, `Library/Application Support` — where the app keeps its
+  live database and its own backups), or when it is not a WAM desktop database. Work only on a renamed copy of a
+  backup in a separate folder.
 - **Aggregates only.** No asset name, asset code, serial number, person name, username, note, lookup name or file path
   is printed. Besides counts and percentages it prints only: status and role names, audit-log action and entity-type
   codes, the earliest and latest history/audit dates, the journal mode, and SQLite's own table, index and integrity
@@ -29,12 +36,13 @@ touches the real data. The results inform the Phase 1B-3 schema and migration re
 
 1. **The current desktop app**, to make a fresh backup (it runs its database migrations at start-up, so the backup has
    the current structure).
-2. **The SQLite command-line shell, version 3.33 or later** (`.mode box` needs 3.33). For Windows: the official
+2. **The SQLite command-line shell, version 3.38 or later** (built-in JSON functions, used for the stop messages;
+   `.mode box` needs 3.33). For Windows: the official
    "sqlite-tools-win-x64" ZIP from <https://sqlite.org/download.html> — a single `sqlite3.exe`, no installer; compare
    the SHA3-256 hash shown on that page. Alternatively inside WSL2 (decision D-08): `sudo apt install sqlite3`.
    Graphical tools such as DB Browser for SQLite are **not** suitable: they do not run the shell settings at the top
    of the script and show only the last result.
-3. **Optional:** Python 3.9 or later, to run the self-test on synthetic data first.
+3. **Optional:** Python 3.10 or later, to run the self-test on synthetic data first.
 
 ## Steps (Windows Command Prompt, `cmd.exe`)
 
@@ -42,7 +50,10 @@ touches the real data. The results inform the Phase 1B-3 schema and migration re
    consistent; a plain copy of the live file can miss recent changes, because the app runs in WAL mode).
 2. Create a working folder, for example `C:\WAM-assessment`, and copy **the new backup file** into it. Rename the copy
    to `wam-copy.db`. Never point the script at the live file in the app's data folder (`…\asset-warehouse.db`).
-3. Put `o06-data-quality.sql` and `sqlite3.exe` in the same folder.
+3. Put `o06-data-quality.sql` and `sqlite3.exe` in the same folder. The folder must **not** contain
+   `wam-copy.db-wal` or `wam-copy.db-shm`: such side files mean the live database was copied instead of a backup —
+   delete the folder's contents and start again from step 1 (the script cannot see those files and would report
+   incomplete data).
 4. Note the copy's fingerprint (to confirm afterwards that nothing changed it):
    ```
    cd C:\WAM-assessment
@@ -52,8 +63,8 @@ touches the real data. The results inform the Phase 1B-3 schema and migration re
    ```
    sqlite3.exe -readonly "file:wam-copy.db?mode=ro&immutable=1" ".output o06-report.txt" ".read o06-data-quality.sql"
    ```
-   If it stops early, the reason is printed in the window (for example the live-file-name check). Nothing has been
-   changed in that case either. If your shell version rejects the two quoted commands at the end, use this equivalent
+   If it stops early, the window shows an error containing `$ STOP:` followed by the reason (for example "the file
+   is inside an application-data folder"). Nothing has been changed in that case either. If your shell version rejects the two quoted commands at the end, use this equivalent
    form instead (in `cmd.exe`, not PowerShell):
    ```
    sqlite3.exe -readonly "file:wam-copy.db?mode=ro&immutable=1" < o06-data-quality.sql > o06-report.txt
@@ -74,13 +85,16 @@ It needs the repository checkout (it reads the desktop schema from `src/main/dat
 ## What was verified, and what was not (2026-10-27)
 
 - **Verified** in the development sandbox with the SQLite **3.45.1** engine (through Python's `sqlite3` module), on a
-  synthetic database built from the desktop's `schema.sql` with planted problems: every statement runs; the file is
+  synthetic database built from the desktop's `schema.sql` with planted problems: all 34 statements run; the file is
   byte-identical afterwards and no side files appear; writes are refused after `query_only`; no synthetic name, code,
   serial, username, note, lookup name or path appears in the output; every printed text value is one of the kinds
-  listed above; the counts match the planted problems; the live-file-name check stops the run.
+  listed above; the counts match the planted problems; six unsafe inputs are refused before any data is read (live
+  file name; `AppData`, `.config` and `Library/Application Support` locations; a non-WAM database; `query_only`
+  removed).
 - **Not verified:** the four shell settings at the top (`.bail`, `.headers`, `.mode box`, `.nullvalue`) and the exact
-  command in step 5 — the sqlite3 shell could not be downloaded in the sandbox (network policy). Nothing has been run
-  on Windows or on real data.
+  commands in step 5. The sqlite3 shell could not be downloaded in the sandbox (network policy), and building it from
+  the source bundled in an npm package was not permitted there. Nothing has been run on Windows or on real data. The
+  optional dry run above, on your PC, is the first test of the exact commands.
 
 ## How the results will be used (Phase 1B-3)
 

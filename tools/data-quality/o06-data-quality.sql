@@ -9,8 +9,10 @@
 --     switches the connection to query_only, so SQLite itself refuses any write; and this file
 --     contains only SELECT statements and read-only PRAGMA functions — no INSERT, UPDATE, DELETE,
 --     CREATE, DROP, ALTER, ATTACH, VACUUM or REINDEX.
---   * Never the live database: section 0 stops the run if the file still has the live name
---     (asset-warehouse.db). Work only on a renamed copy of a backup.
+--   * Never the live database: section 0 stops the run if query_only is off, if the file still has
+--     the live name (asset-warehouse.db), if it lies in an application-data folder (where the app
+--     keeps its live database and its own backups), or if it is not a WAM desktop database. Work
+--     only on a renamed copy of a backup in a separate folder.
 --   * Aggregates only: no asset name, asset code, serial number, person name, username, note,
 --     lookup name or file path is printed. Besides counts and percentages, the only values printed
 --     from the database are: status names and role names (lookup labels), the audit log's action
@@ -31,13 +33,36 @@ PRAGMA query_only = ON;
 -- ====================================================================================================
 -- 0. Safety checks and environment  [FACT]
 -- ====================================================================================================
--- Stops here (deliberate "integer overflow" error) if this is the live file name. The path itself
--- is never printed: it can contain the Windows user name.
+-- Each check below either prints "ok: …" or STOPS the run with an error message beginning "bad JSON
+-- path: '$ STOP: …'" (a deliberate error: the reason follows STOP). Nothing has been read beyond the
+-- check at that point, and nothing has been changed. The file path itself is never printed: it can
+-- contain the Windows user name.
+
+-- 0a. SQLite must refuse writes on this connection.
+SELECT CASE WHEN (SELECT query_only FROM pragma_query_only) = 1
+            THEN 'ok: query_only is on, so SQLite refuses any write'
+            ELSE json_extract('{}', '$ STOP: query_only is off; use the unmodified script') END AS query_only_check;
+
+-- 0b. Only a renamed copy, outside the folders where the app keeps its live database and backups.
 SELECT CASE
-         WHEN lower(file) LIKE '%asset-warehouse.db' THEN abs(-9223372036854775808)
-         ELSE 'ok: the file is not named like the live database'
-       END AS live_database_name_check
+         WHEN file IS NULL OR file = ''
+           THEN json_extract('{}', '$ STOP: no database file is open (temporary or in-memory database)')
+         WHEN lower(replace(file, '\', '/')) LIKE '%/asset-warehouse.db'
+           THEN json_extract('{}', '$ STOP: the file is named like the live desktop database; use a renamed copy of a backup')
+         WHEN lower(replace(file, '\', '/')) LIKE '%/appdata/%'
+           OR lower(replace(file, '\', '/')) LIKE '%/.config/%'
+           OR lower(replace(file, '\', '/')) LIKE '%/library/application support/%'
+           THEN json_extract('{}', '$ STOP: the file is inside an application-data folder; copy the backup to a separate working folder first')
+         ELSE 'ok: a renamed copy outside application-data folders'
+       END AS copy_location_check
   FROM pragma_database_list WHERE name = 'main';
+
+-- 0c. It must be a WAM desktop database.
+SELECT CASE WHEN (SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name IN
+                   ('assets', 'asset_transactions', 'audit_log', 'asset_statuses', 'item_types',
+                    'workshops', 'countries', 'users', 'roles', 'settings')) = 10
+            THEN 'ok: all ten desktop tables are present'
+            ELSE json_extract('{}', '$ STOP: this is not a WAM desktop database (expected tables are missing)') END AS database_kind_check;
 
 SELECT (SELECT query_only FROM pragma_query_only) AS query_only_enabled_1_means_yes,
        sqlite_version() AS sqlite_version,
