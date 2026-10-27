@@ -2,20 +2,35 @@
   "name": "wam-server",
   "version": "0.0.0",
   "private": true,
-  "description": "WAM web server (Phase 1A skeleton only: no runtime dependencies, no application code yet).",
+  "description": "WAM web server (Phase 1B-1: configuration, Fastify health endpoints, PostgreSQL connection, migrations, test harness; no application features yet).",
   "type": "module",
   "license": "UNLICENSED",
   "engines": {
     "node": ">=24.0.0"
   },
   "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "start": "node dist/main.js",
+    "db:migrate": "node dist/cli/migrate-main.js",
     "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
     "test": "vitest run",
-    "verify": "npm run typecheck && npm test"
+    "test:unit": "vitest run --project unit",
+    "test:integration": "vitest run --project integration",
+    "verify": "npm run typecheck && npm run lint && npm test && npm run build"
+  },
+  "dependencies": {
+    "fastify": "5.12.7",
+    "kysely": "0.29.7",
+    "pg": "8.23.1"
   },
   "devDependencies": {
+    "@eslint/js": "10.0.1",
     "@types/node": "24.19.2",
+    "@types/pg": "8.23.1",
+    "eslint": "10.13.0",
     "typescript": "6.0.3",
+    "typescript-eslint": "8.72.0",
     "vitest": "4.1.12"
   }
 }
