@@ -131,7 +131,7 @@ export function sessionCookieFrom(res: LightMyRequestResponse): string {
 }
 
 /** A same-origin request; pass `cookie` to send it as a signed-in user. */
-export function call(h: Harness, options: InjectOptions & { readonly cookie?: string }): Promise<LightMyRequestResponse> {
+export function call(h: Harness, options: InjectOptions & { readonly cookie?: string | undefined }): Promise<LightMyRequestResponse> {
   const { cookie, headers, ...rest } = options
   const safe = rest.method === undefined || ['GET', 'HEAD', 'OPTIONS'].includes(String(rest.method).toUpperCase())
   return h.app.inject({

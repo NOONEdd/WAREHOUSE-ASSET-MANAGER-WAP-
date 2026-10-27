@@ -16,18 +16,7 @@ export interface Access {
 
 export async function loadAccess(db: Kysely<Database>, userId: number, isOwner: boolean): Promise<Access> {
   if (isOwner) return { isOwner: true, system: new Set(), warehouses: new Map() }
-  const { rows } = await sql<{ warehouse_id: number | null; permission: string }>`
-    SELECT NULL::integer AS warehouse_id, ppp.permission
-      FROM wam.user_system_profiles usp
-      JOIN wam.permission_profiles pp ON pp.id = usp.profile_id AND pp.is_active
-      JOIN wam.permission_profile_permissions ppp ON ppp.profile_id = pp.id
-     WHERE usp.user_id = ${userId}
-    UNION
-    SELECT uwp.warehouse_id, ppp.permission
-      FROM wam.user_warehouse_profiles uwp
-      JOIN wam.permission_profiles pp ON pp.id = uwp.profile_id AND pp.is_active
-      JOIN wam.permission_profile_permissions ppp ON ppp.profile_id = pp.id
-     WHERE uwp.user_id = ${userId}`.execute(db)
+  const { rows } = await accessQuery(userId).execute(db)
 
   const system = new Set<SystemPermission>()
   const warehouses = new Map<number, Set<WarehousePermission>>()
@@ -41,6 +30,22 @@ export async function loadAccess(db: Kysely<Database>, userId: number, isOwner: 
     }
   }
   return { isOwner: false, system, warehouses }
+}
+
+/** The per-request permission query; exported so the performance check can EXPLAIN exactly this query. */
+export function accessQuery(userId: number) {
+  return sql<{ warehouse_id: number | null; permission: string }>`
+    SELECT NULL::integer AS warehouse_id, ppp.permission
+      FROM wam.user_system_profiles usp
+      JOIN wam.permission_profiles pp ON pp.id = usp.profile_id AND pp.is_active
+      JOIN wam.permission_profile_permissions ppp ON ppp.profile_id = pp.id
+     WHERE usp.user_id = ${userId}
+    UNION
+    SELECT uwp.warehouse_id, ppp.permission
+      FROM wam.user_warehouse_profiles uwp
+      JOIN wam.permission_profiles pp ON pp.id = uwp.profile_id AND pp.is_active
+      JOIN wam.permission_profile_permissions ppp ON ppp.profile_id = pp.id
+     WHERE uwp.user_id = ${userId}`
 }
 
 export function hasSystemPermission(access: Access, permission: SystemPermission): boolean {

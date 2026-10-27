@@ -86,7 +86,17 @@ export async function findActiveSession(
   settings: SessionSettings
 ): Promise<ActiveSession | null> {
   if (!SESSION_TOKEN_PATTERN.test(token)) return null
-  const row = await db
+  const row = await sessionLookupQuery(db, sha256(token), settings.idleMinutes).executeTakeFirst()
+  if (row === undefined) return null
+  if (row.stale) {
+    await db.updateTable('sessions').set({ last_seen_at: sql<Date>`now()` }).where('id', '=', row.sessionId).execute()
+  }
+  return { sessionId: row.sessionId, userId: row.userId, username: row.username, displayName: row.displayName, isOwner: row.isOwner }
+}
+
+/** The per-request session query; exported so the performance check can EXPLAIN exactly this query. */
+export function sessionLookupQuery(db: Kysely<Database>, tokenHash: Buffer, idleMinutes: number) {
+  return db
     .selectFrom('sessions as s')
     .innerJoin('users as u', 'u.id', 's.user_id')
     .select([
@@ -97,17 +107,11 @@ export async function findActiveSession(
       'u.is_owner as isOwner',
       sql<boolean>`s.last_seen_at < now() - make_interval(secs => ${TOUCH_INTERVAL_SECONDS})`.as('stale')
     ])
-    .where('s.token_hash', '=', sha256(token))
+    .where('s.token_hash', '=', tokenHash)
     .where('s.revoked_at', 'is', null)
     .where('s.expires_at', '>', sql<Date>`now()`)
-    .where('s.last_seen_at', '>', sql<Date>`now() - make_interval(mins => ${settings.idleMinutes})`)
+    .where('s.last_seen_at', '>', sql<Date>`now() - make_interval(mins => ${idleMinutes})`)
     .where('u.status', '=', 'active')
-    .executeTakeFirst()
-  if (row === undefined) return null
-  if (row.stale) {
-    await db.updateTable('sessions').set({ last_seen_at: sql<Date>`now()` }).where('id', '=', row.sessionId).execute()
-  }
-  return { sessionId: row.sessionId, userId: row.userId, username: row.username, displayName: row.displayName, isOwner: row.isOwner }
 }
 
 /** Ends the session holding this token, whoever it belongs to; returns its user, if it was live. */

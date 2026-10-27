@@ -9,6 +9,8 @@ import { cookieSettingsFor } from './http/cookies.js'
 import { registerErrorHandling } from './http/errors.js'
 import { registerForgeryProtection } from './http/forgery.js'
 import { registerHealthRoutes } from './http/health.js'
+import { registerAdminCatalogRoutes } from './http/routes/adminCatalogRoutes.js'
+import { registerAdminUserRoutes } from './http/routes/adminUserRoutes.js'
 import { registerAuthRoutes } from './http/routes/authRoutes.js'
 import { registerMeRoutes } from './http/routes/meRoutes.js'
 
@@ -65,5 +67,7 @@ export function buildApp(options: AppOptions): FastifyInstance {
   registerHealthRoutes(app, { db: options.db, readinessTimeoutMs: options.readinessTimeoutMs ?? 2_000 })
   registerAuthRoutes(app, { db: options.db, sessions, cookie })
   registerMeRoutes(app, { db: options.db, sessions })
+  registerAdminUserRoutes(app, { db: options.db })
+  registerAdminCatalogRoutes(app, { db: options.db })
   return app
 }
