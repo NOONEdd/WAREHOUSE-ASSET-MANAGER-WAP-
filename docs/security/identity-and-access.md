@@ -28,6 +28,11 @@ No real names, credentials or employee data appear in this repository. Examples 
 - **Ownership transfer** (`npm run owner -- transfer --to <username> --yes`): for continuity when the owner role
   changes hands. Audited.
 - The owner's own password is changed through the normal change-password function (current password required).
+- **The owner account is never reset over HTTP**, by anyone — not even by the owner: the admin endpoints that issue a
+  setup code or reset MFA refuse the owner account (`403`). Resetting the owner's password or authenticator is
+  possible only with `recover` in the owner CLI on the server. Otherwise a stolen owner session could be turned into a
+  permanent takeover (reset, new password, new authenticator). Found and closed 2026-10-27 (verified by a test and by
+  removing the check, which the test then catches).
 
 ## 2. Authorization model (ASVS V8.1.1, V8.1.2)
 
@@ -63,7 +68,7 @@ For every actor **other than the owner**:
 |---|---|---|
 | A1 | Only the owner may create, edit, delete, assign or revoke **system** profiles — that is, appoint or remove administrators. | service layer |
 | A2 | Only the owner may manage an **administrator** (edit, disable, reset, end sessions, change access). Administrators cannot act on each other. | service layer |
-| A3 | Nobody but the owner may modify the owner account; the owner can never be disabled; ownership changes only via the CLI. | service layer + `CHECK` + column grants |
+| A3 | Nobody but the owner may modify the owner account; the owner can never be disabled; ownership changes only via the CLI; the owner's password and authenticator are reset only via the CLI, never over HTTP, not even by the owner (§1). | service layer + `CHECK` + column grants |
 | A4 | Nobody may change **their own** access, status or setup code (they change their password through the normal function). | service layer |
 | A5 | A holder of `profile.manage` may not edit or delete a profile that is assigned to **themselves**. | service layer |
 | A6 | Assigning a warehouse profile requires `user.manage`; the profile must be active and of warehouse scope, and the warehouse must exist. | service layer + composite foreign keys |
@@ -198,7 +203,7 @@ as before (`200`).
 Enrolling, replacing or removing ends the user's **other** sessions (a credential change, V7.4.3).
 
 **Administrator reset** (`POST /api/admin/users/:id/reset-mfa`, `user.manage`, rules A2–A4: nobody resets their own,
-only the owner resets an administrator, nobody resets the owner): removes the authenticator and recovery codes **and at
+only the owner resets an administrator, nobody — the owner included — resets the owner account over HTTP): removes the authenticator and recovery codes **and at
 the same time** clears the password, ends all sessions and issues a new setup code. The person proves their identity
 to the administrator the same way as at account creation — in person or by a telephone call to a known number — and
 receives the setup code that way (V6.4.4). Someone who knows only the old password therefore cannot enrol their own

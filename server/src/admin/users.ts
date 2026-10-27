@@ -269,6 +269,7 @@ export async function issueUserSetupCode(
   id: number
 ): Promise<{ readonly setupCode: string; readonly expiresInHours: number }> {
   const target = await lockManagedUser(trx, actor, id)
+  assertNotOwnerCredentials(target)
   if (target.status !== 'active') throw new AppError('VALIDATION_FAILED', { reason: 'enable the account first' })
   const { setupCode, sessionsEnded } = await resetPassword(trx, actor, id, 'setup_code_issued')
   await recordAudit(trx, context, {
@@ -295,6 +296,7 @@ export async function resetUserMfa(
   id: number
 ): Promise<{ readonly setupCode: string; readonly expiresInHours: number }> {
   const target = await lockManagedUser(trx, actor, id)
+  assertNotOwnerCredentials(target)
   if (target.status !== 'active') throw new AppError('VALIDATION_FAILED', { reason: 'enable the account first' })
   const hadAuthenticator = await removeMfa(trx, id)
   const { setupCode, sessionsEnded } = await resetPassword(trx, actor, id, 'mfa_reset')
@@ -306,6 +308,18 @@ export async function resetUserMfa(
     details: { hadAuthenticator, sessionsEnded, expiresInHours: SETUP_CODE_TTL_HOURS }
   })
   return { setupCode, expiresInHours: SETUP_CODE_TTL_HOURS }
+}
+
+/**
+ * The owner's password and authenticator are reset only by the owner CLI on
+ * the server (identity-and-access §1, §3.2.5) — never over HTTP, not even
+ * by the owner: otherwise a stolen owner session could be turned into a
+ * permanent takeover (reset, then a new password and a new authenticator).
+ */
+function assertNotOwnerCredentials(target: { readonly isOwner: boolean }): void {
+  if (target.isOwner) {
+    throw new AppError('FORBIDDEN', { rule: 'A3', reason: 'the owner account is reset only with the owner CLI on the server' })
+  }
 }
 
 async function resetPassword(

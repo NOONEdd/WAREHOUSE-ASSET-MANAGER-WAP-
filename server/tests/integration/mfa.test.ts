@@ -605,6 +605,23 @@ describe('administrator reset of a lost authenticator (§3.2.4; ASVS V6.4.4)', (
     expect(byOwner.statusCode).toBe(200)
   })
 
+  it('never resets the owner over HTTP — not even when the owner asks; only the server-side CLI can (§1, §3.2.5)', async () => {
+    const before = await h.ownerDb.selectFrom('users').select('password_hash').where('id', '=', ids.owner).executeTakeFirstOrThrow()
+    for (const path of ['setup-code', 'reset-mfa']) {
+      for (const cookie of [ownerCookie, adminCookie]) {
+        const res = await call(h, { method: 'POST', url: `/api/admin/users/${String(ids.owner)}/${path}`, cookie })
+        expect(res.statusCode, `${path}: ${res.body}`).toBe(403)
+        expect(res.body).not.toMatch(/setupCode/)
+      }
+    }
+    // Nothing changed: same password, authenticator still there, the owner's session still works.
+    const after = await h.ownerDb.selectFrom('users').select('password_hash').where('id', '=', ids.owner).executeTakeFirstOrThrow()
+    expect(after.password_hash).toBe(before.password_hash)
+    expect(await h.ownerDb.selectFrom('user_mfa').select('user_id').where('user_id', '=', ids.owner).executeTakeFirst()).toBeDefined()
+    expect((await me(ownerCookie)).statusCode).toBe(200)
+    expect(await h.ownerDb.selectFrom('password_setup_codes').select('user_id').where('user_id', '=', ids.owner).executeTakeFirst()).toBeUndefined()
+  })
+
   it('shows in the user list who has an authenticator', async () => {
     const res = await call(h, { method: 'GET', url: '/api/admin/users?search=mfa.', cookie: ownerCookie })
     const users = res.json<{ users: { username: string; mfaEnrolled: boolean }[] }>().users
