@@ -181,6 +181,12 @@ export function registerMfaRoutes(app: FastifyInstance, options: { readonly db: 
     if (state.required) throw new AppError('FORBIDDEN', { reason: 'multi-factor authentication is required for this account' })
     await reauthenticate(request, body.currentPassword, body.code)
     await db.transaction().execute(async (trx) => {
+      // Re-checked under the user's row lock — the lock an appointment takes —
+      // so an appointment cannot slip in between the check and the removal (O-12).
+      await trx.selectFrom('users').select('id').where('id', '=', session.userId).forUpdate().executeTakeFirstOrThrow()
+      if ((await mfaState(trx, session.userId)).required) {
+        throw new AppError('FORBIDDEN', { reason: 'multi-factor authentication is required for this account' })
+      }
       await removeMfa(trx, session.userId)
       const otherSessionsEnded = await revokeUserSessions(trx, session.userId, 'mfa_changed', session.sessionId)
       await recordAudit(trx, auditContext(request), {

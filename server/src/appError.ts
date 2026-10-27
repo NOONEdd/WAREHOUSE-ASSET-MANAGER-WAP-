@@ -23,6 +23,7 @@ const DEFINITIONS = {
   CODE_TAKEN: [409, 'That code is already in use'],
   PROFILE_IN_USE: [409, 'The profile is still assigned to users'],
   MFA_ALREADY_ENROLLED: [409, 'An authenticator app is already set up for this account'],
+  ADMIN_MFA_REQUIRED: [409, 'Administrator profiles require an authenticator app that is already set up'],
   IDEMPOTENCY_KEY_REUSED: [422, 'This Idempotency-Key was already used for a different request'],
   MFA_LOCKED: [423, 'Too many incorrect verification codes; ask an administrator to reset your sign-in'],
   TOO_MANY_REQUESTS: [429, 'Too many attempts; try again later']

@@ -297,6 +297,14 @@ export async function resetUserMfa(
 ): Promise<{ readonly setupCode: string; readonly expiresInHours: number }> {
   const target = await lockManagedUser(trx, actor, id)
   assertNotOwnerCredentials(target)
+  // O-12: an administrator always keeps an authenticator. Remove the
+  // administrator profiles first; appoint again after the new enrolment.
+  if (target.isAdministrator) {
+    throw new AppError('ADMIN_MFA_REQUIRED', {
+      rule: 'O-12',
+      reason: 'remove the administrator profiles first; appoint again after the user has set up a new authenticator app'
+    })
+  }
   if (target.status !== 'active') throw new AppError('VALIDATION_FAILED', { reason: 'enable the account first' })
   const hadAuthenticator = await removeMfa(trx, id)
   const { setupCode, sessionsEnded } = await resetPassword(trx, actor, id, 'mfa_reset')
@@ -320,6 +328,10 @@ function assertNotOwnerCredentials(target: { readonly isOwner: boolean }): void 
   if (target.isOwner) {
     throw new AppError('FORBIDDEN', { rule: 'A3', reason: 'the owner account is reset only with the owner CLI on the server' })
   }
+}
+
+async function hasAuthenticator(trx: Kysely<Database>, userId: number): Promise<boolean> {
+  return (await trx.selectFrom('user_mfa').select('user_id').where('user_id', '=', userId).executeTakeFirst()) !== undefined
 }
 
 async function resetPassword(
@@ -395,6 +407,17 @@ export async function setUserAccess(trx: Kysely<Database>, context: AuditContext
   const existingWarehouses =
     warehouseIds.length === 0 ? [] : await trx.selectFrom('warehouses').select('id').where('id', 'in', warehouseIds).execute()
   if (existingWarehouses.length !== warehouseIds.length) throw new AppError('VALIDATION_FAILED', { field: 'warehouseAssignments', reason: 'unknown warehouse' })
+
+  // O-12: enrol first, then appoint. Checked under the user's row lock (taken
+  // by lockManagedUser) — the lock that removing an authenticator also takes,
+  // so the two cannot interleave. The database enforces the same rule
+  // (migration 0004).
+  if (systemChanged && wantedSystem.length > 0 && !(await hasAuthenticator(trx, id))) {
+    throw new AppError('ADMIN_MFA_REQUIRED', {
+      rule: 'O-12',
+      reason: 'the user must set up an authenticator app before being given administrator profiles; removing them is always possible'
+    })
+  }
 
   // Replace.
   if (systemChanged) {

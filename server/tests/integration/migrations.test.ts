@@ -144,6 +144,23 @@ describe('migrator guarantees (PostgreSQL)', () => {
       expect(rows[0]?.t).toBeNull()
     }))
 
+  it('0004 (decision O-12) refuses a database where an administrator has no authenticator, and applies nothing', () =>
+    withDatabase(async (_tdb, owner) => {
+      const { error: before } = await createMigrator(owner).migrateTo('0003_multi_factor_authentication')
+      expect(before).toBeUndefined()
+      await sql`INSERT INTO wam.users (username, display_name) VALUES ('legacy.admin', 'Legacy administrator')`.execute(owner)
+      await sql`INSERT INTO wam.permission_profiles (name, scope) VALUES ('Legacy admin profile', 'system')`.execute(owner)
+      await sql`INSERT INTO wam.user_system_profiles (user_id, profile_id)
+                SELECT u.id, p.id FROM wam.users u, wam.permission_profiles p WHERE u.username = 'legacy.admin'`.execute(owner)
+      const { error } = await createMigrator(owner).migrateToLatest()
+      expect(String(error)).toMatch(/1 administrator account\(s\) have no enrolled authenticator/)
+      expect((await readMigrationState(owner)).pending).toContain('0004_administrators_require_mfa')
+      // Resolved by removing the administrator profile; then it applies.
+      await sql`DELETE FROM wam.user_system_profiles`.execute(owner)
+      expect((await createMigrator(owner).migrateToLatest()).error).toBeUndefined()
+      expect((await readMigrationState(owner)).pending).toEqual([])
+    }))
+
   it('two concurrent runs apply each migration exactly once', () =>
     withDatabase(async (tdb, owner) => {
       const a = connect(tdb.urls.owner)

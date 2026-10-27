@@ -2,11 +2,12 @@ import { randomUUID } from 'node:crypto'
 import type { LightMyRequestResponse } from 'fastify'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import {
-  assignSystemProfile,
+  appointAdministrator,
   assignWarehouseProfile,
   auditRows,
   call,
   createHarness,
+  enrollMfa,
   insertProfile,
   insertUser,
   insertWarehouse,
@@ -38,8 +39,8 @@ beforeAll(async () => {
   ids.adminProfile = await insertProfile(h, 'Synthetic administrator', 'system', ADMIN_PERMISSIONS)
   ids.clerkProfile = await insertProfile(h, 'Synthetic clerk', 'warehouse', ['asset.view', 'asset.create'])
   ids.auditProfile = await insertProfile(h, 'Synthetic warehouse auditor', 'warehouse', ['audit.view'])
-  await assignSystemProfile(h, ids.admin1, ids.adminProfile)
-  await assignSystemProfile(h, ids.admin2, ids.adminProfile)
+  await appointAdministrator(h, ids.admin1, ids.adminProfile)
+  await appointAdministrator(h, ids.admin2, ids.adminProfile)
   await assignWarehouseProfile(h, ids.clerk, ids.whA, ids.clerkProfile)
   await assignWarehouseProfile(h, ids.auditorA, ids.whA, ids.auditProfile)
   for (const [name, username] of [
@@ -200,20 +201,29 @@ describe('escalation rules (identity-and-access §2.3)', () => {
     )
     expectRule(await admin('admin1', 'PATCH', `/api/admin/profiles/${String(ids.adminProfile)}`, { version: 1, permissions: ['user.view'] }), 'A1')
 
-    // The owner can do all three.
+    // The owner can do all three — the appointment only for a user who already has an authenticator (O-12).
     expect((await admin('owner', 'POST', '/api/admin/profiles', { name: 'Read-only admin', scope: 'system', permissions: ['user.view'] })).statusCode).toBe(201)
+    const notEnrolled = await admin('owner', 'PUT', `/api/admin/users/${String(ids.plain)}/access`, {
+      version: await userVersion(ids.plain ?? 0),
+      systemProfileIds: [ids.adminProfile],
+      warehouseAssignments: []
+    })
+    expect(notEnrolled.statusCode).toBe(409)
+    expect(notEnrolled.json()).toMatchObject({ error: { code: 'ADMIN_MFA_REQUIRED', details: { rule: 'O-12' } } })
+    const appointee = await insertUser(h, { username: 'appointee' })
+    await enrollMfa(h, appointee)
     expect(
       (
-        await admin('owner', 'PUT', `/api/admin/users/${String(ids.plain)}/access`, {
-          version: await userVersion(ids.plain ?? 0),
+        await admin('owner', 'PUT', `/api/admin/users/${String(appointee)}/access`, {
+          version: await userVersion(appointee),
           systemProfileIds: [ids.adminProfile],
           warehouseAssignments: []
         })
       ).statusCode
     ).toBe(200)
     // …and take it away again.
-    await admin('owner', 'PUT', `/api/admin/users/${String(ids.plain)}/access`, {
-      version: await userVersion(ids.plain ?? 0),
+    await admin('owner', 'PUT', `/api/admin/users/${String(appointee)}/access`, {
+      version: await userVersion(appointee),
       systemProfileIds: [],
       warehouseAssignments: []
     })

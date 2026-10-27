@@ -2,7 +2,20 @@ import { sql } from 'kysely'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { MFA_MAX_FAILED_ATTEMPTS } from '../../src/auth/mfa.js'
 import { runOwnerCli } from '../../src/cli/owner.js'
-import { auditRows, call, cookieFrom, createHarness, GOOD_PASSWORD, insertUser, login, totpFor, type Harness } from '../support/appHarness.js'
+import {
+  appointAdministrator,
+  assignSystemProfileBypassingO12,
+  auditRows,
+  call,
+  cookieFrom,
+  createHarness,
+  GOOD_PASSWORD,
+  insertProfile,
+  insertUser,
+  login,
+  totpFor,
+  type Harness
+} from '../support/appHarness.js'
 import { createTestDatabase, migrationEnv } from '../support/testDatabase.js'
 
 // The owner CLI (docs/security/identity-and-access.md §1): the only way to
@@ -173,6 +186,22 @@ describe('ownership transfer', () => {
     const cookie = await login(h, 'successor')
     expect((await call(h, { method: 'GET', url: '/api/me', cookie })).json()).toMatchObject({ user: { isOwner: true } })
     expect((await auditRows(h, 'owner.transferred'))[0]?.details).toMatchObject({ from: { username: 'site.owner' }, to: { username: 'successor' } })
+  })
+
+  it('leaves the new and the previous owner without administrator profiles (decision O-12), and owner recovery still works', async () => {
+    const id = await insertUser(h, { username: 'admin.successor' })
+    await appointAdministrator(h, id, await insertProfile(h, 'CLI test administrator', 'system', ['user.view']))
+    const result = await owner(['transfer', '--to', 'admin.successor', '--yes'])
+    expect(result.code).toBe(0)
+    expect(await h.ownerDb.selectFrom('user_system_profiles').select('profile_id').where('user_id', '=', id).execute()).toEqual([])
+    expect((await auditRows(h, 'owner.transferred')).at(-1)?.details).toMatchObject({ administratorProfilesRemoved: 1 })
+    // The owner's separate recovery path is not blocked by O-12 — even with leftover administrator rows.
+    await assignSystemProfileBypassingO12(h, id, await insertProfile(h, 'Leftover administrator', 'system', ['user.view']))
+    const recovered = await owner(['recover', '--reset-mfa', '--yes'])
+    expect(recovered.code, recovered.err).toBe(0)
+    expect(await h.ownerDb.selectFrom('user_mfa').select('user_id').where('user_id', '=', id).executeTakeFirst()).toBeUndefined()
+    // Hand ownership back so the following tests keep their owner.
+    expect((await owner(['transfer', '--to', 'successor', '--yes'])).code).toBe(0)
   })
 
   it('refuses a disabled or unknown target', async () => {

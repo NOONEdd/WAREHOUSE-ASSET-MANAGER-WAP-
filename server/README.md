@@ -123,7 +123,7 @@ npm run owner -- status                                              # read-only
 npm run owner -- bootstrap --username <name> --display-name "<name>"   # once; prints a one-time setup code
 npm run owner -- recover --yes             # owner locked out: new setup code, owner signed out, throttling and MFA lock lifted
 npm run owner -- recover --reset-mfa --yes # as above, and removes the owner's authenticator (lost phone, no recovery codes)
-npm run owner -- transfer --to <username> --yes                     # ownership moves to another active user
+npm run owner -- transfer --to <username> --yes                     # ownership moves to another active user (administrator profiles of both accounts are removed)
 npm run owner -- end-all-sessions --yes                             # incident response: everyone signs in again
 ```
 
@@ -161,7 +161,7 @@ migrations this code does not know. Each case has a test.
 |---|---|
 | Sign-in | `POST /api/auth/login` (`200` signed in, or `202` with `next` = `mfa_verify` or `mfa_enroll` and a short-lived second-step cookie), `POST /api/auth/mfa/verify`, `POST /api/auth/mfa/enroll/start`, `/enroll/confirm`, `POST /api/auth/logout`, `/change-password`, `/setup-password` |
 | Own account | `GET /api/me`, `GET /api/me/sessions`, `POST /api/me/sessions/end-others`, `GET /api/me/mfa`, `POST /api/me/mfa/enroll/start`, `/enroll/confirm`, `/recovery-codes`, `/disable` |
-| Users | `GET /api/admin/users`, `GET/PATCH /api/admin/users/:id`, `POST /api/admin/users`, `PUT /api/admin/users/:id/access`, `POST /api/admin/users/:id/setup-code`, `POST /api/admin/users/:id/reset-mfa`, `POST /api/admin/users/:id/end-sessions` |
+| Users | `GET /api/admin/users`, `GET/PATCH /api/admin/users/:id`, `POST /api/admin/users`, `PUT /api/admin/users/:id/access` (administrator profiles only for users who already have an authenticator: `409 ADMIN_MFA_REQUIRED` otherwise), `POST /api/admin/users/:id/setup-code`, `POST /api/admin/users/:id/reset-mfa` (never for the owner account; for an administrator only after removing the administrator profiles), `POST /api/admin/users/:id/end-sessions` |
 | Security policy (owner only) | `GET/PUT /api/admin/security-policy` — who must use MFA beyond the owner and administrators (`privileged` or `all_users`) |
 | Access catalogue | `GET /api/admin/permissions`, `GET/POST /api/admin/profiles`, `PATCH/DELETE /api/admin/profiles/:id`, `GET/POST /api/admin/job-titles`, `PATCH /api/admin/job-titles/:id` |
 | Warehouses | `GET/POST /api/admin/warehouses`, `PATCH /api/admin/warehouses/:id` |

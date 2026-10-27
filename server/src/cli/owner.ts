@@ -291,6 +291,13 @@ async function transfer(db: Kysely<Database>, io: CliIo, toInput: string): Promi
       io.err(`Refusing: "${to}" is disabled; enable the account first.`)
       return 1
     }
+    // Administrator profiles mean nothing for the owner (who holds every
+    // permission) and must not silently come back if ownership moves on, so
+    // both accounts leave this transfer without any (decision O-12).
+    const profiles = await trx
+      .deleteFrom('user_system_profiles')
+      .where('user_id', 'in', current === undefined ? [target.id] : [target.id, current.id])
+      .executeTakeFirst()
     // Old owner first: the partial unique index allows only one owner at a time.
     if (current !== undefined) {
       await sql`UPDATE wam.users SET is_owner = false, updated_at = now(), version = version + 1 WHERE id = ${current.id}`.execute(trx)
@@ -306,7 +313,8 @@ async function transfer(db: Kysely<Database>, io: CliIo, toInput: string): Promi
         via: 'owner-cli',
         osUser: osUser(),
         from: current === undefined ? null : { id: current.id, username: current.username },
-        to: { id: target.id, username: target.username }
+        to: { id: target.id, username: target.username },
+        administratorProfilesRemoved: Number(profiles.numDeletedRows)
       }
     })
     io.out(`"${target.username}" is now the owner${current === undefined ? '' : `; "${current.username}" is an ordinary user and was signed out`}.`)

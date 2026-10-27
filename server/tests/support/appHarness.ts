@@ -127,8 +127,29 @@ export async function assignWarehouseProfile(h: Harness, userId: number, warehou
   await h.ownerDb.insertInto('user_warehouse_profiles').values({ user_id: userId, warehouse_id: warehouseId, profile_id: profileId, granted_by: null }).execute()
 }
 
+/** A raw assignment; the database refuses it (decision O-12) unless the user has an authenticator. */
 export async function assignSystemProfile(h: Harness, userId: number, profileId: number): Promise<void> {
   await h.ownerDb.insertInto('user_system_profiles').values({ user_id: userId, profile_id: profileId, granted_by: null }).execute()
+}
+
+/** The O-12 order: an authenticator first (unless already enrolled), then the administrator profile. */
+export async function appointAdministrator(h: Harness, userId: number, profileId: number): Promise<void> {
+  const enrolled = await h.ownerDb.selectFrom('user_mfa').select('user_id').where('user_id', '=', userId).executeTakeFirst()
+  if (enrolled === undefined) await enrollMfa(h, userId)
+  await assignSystemProfile(h, userId, profileId)
+}
+
+/**
+ * An administrator without an authenticator, as data written before decision
+ * O-12 would be: only the superuser, with triggers switched off for its own
+ * transaction, can create this state. Used to test the defenses behind O-12
+ * (sign-in enrolment, per-request enforcement), never to model normal use.
+ */
+export async function assignSystemProfileBypassingO12(h: Harness, userId: number, profileId: number): Promise<void> {
+  await h.superDb.transaction().execute(async (trx) => {
+    await sql`SET LOCAL session_replication_role = replica`.execute(trx)
+    await trx.insertInto('user_system_profiles').values({ user_id: userId, profile_id: profileId, granted_by: null }).execute()
+  })
 }
 
 /** `name=value` of the cookie `name` set by the response (any of its Set-Cookie headers). */

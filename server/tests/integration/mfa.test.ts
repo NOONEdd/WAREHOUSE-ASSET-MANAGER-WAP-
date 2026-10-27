@@ -7,7 +7,8 @@ import { MFA_MAX_FAILED_ATTEMPTS, RECOVERY_CODE_COUNT } from '../../src/auth/mfa
 import { runMaintenance } from '../../src/maintenance.js'
 import { totpCode } from '../../src/auth/totp.js'
 import {
-  assignSystemProfile,
+  appointAdministrator,
+  assignSystemProfileBypassingO12,
   auditRows,
   call,
   CHALLENGE_COOKIE_NAME,
@@ -18,6 +19,7 @@ import {
   GOOD_PASSWORD,
   insertProfile,
   insertUser,
+  insertWarehouse,
   login,
   ORIGIN,
   sessionCookieFrom,
@@ -26,6 +28,7 @@ import {
   type Harness
 } from '../support/appHarness.js'
 import { base32Decode } from '../support/base32.js'
+import { connect } from '../support/testDatabase.js'
 
 // Multi-factor authentication (decision O-07; docs/security/identity-and-access.md
 // §3.2) through the real HTTP API, against PostgreSQL, as wam_app: who must
@@ -47,7 +50,7 @@ beforeAll(async () => {
   ids.owner = await insertUser(h, { username: 'mfa.owner', isOwner: true })
   ids.admin = await insertUser(h, { username: 'mfa.admin' })
   ids.adminProfile = await insertProfile(h, 'MFA test administrator', 'system', ADMIN_PERMISSIONS)
-  await assignSystemProfile(h, ids.admin, ids.adminProfile)
+  await appointAdministrator(h, ids.admin, ids.adminProfile)
   ownerCookie = await login(h, 'mfa.owner')
   adminCookie = await login(h, 'mfa.admin')
 })
@@ -72,6 +75,18 @@ async function challengeFor(username: string, expectedNext: 'mfa_verify' | 'mfa_
 const verify = (challenge: string, code: string) => call(h, { method: 'POST', url: '/api/auth/mfa/verify', cookie: challenge, payload: { code } })
 const me = (cookie: string) => call(h, { method: 'GET', url: '/api/me', cookie })
 const errorCode = (res: LightMyRequestResponse) => res.json<{ error: { code: string } }>().error.code
+
+/** The owner replaces a user's system profiles (no warehouse assignments) through the API. */
+async function setAccess(userId: number, systemProfileIds: number[], cookie: string = ownerCookie): Promise<LightMyRequestResponse> {
+  const { version } = await h.ownerDb.selectFrom('users').select('version').where('id', '=', userId).executeTakeFirstOrThrow()
+  return call(h, {
+    method: 'PUT',
+    url: `/api/admin/users/${String(userId)}/access`,
+    cookie,
+    headers: { 'idempotency-key': randomUUID() },
+    payload: { version, systemProfileIds, warehouseAssignments: [] }
+  })
+}
 
 /** Signs a not-yet-enrolled user in through enrolment; returns the session, the secret and the recovery codes. */
 async function enrollAtSignIn(username: string): Promise<{ cookie: string; secret: Buffer; recoveryCodes: string[] }> {
@@ -127,9 +142,9 @@ describe('who must use a second factor (§3.2.1)', () => {
     }
   })
 
-  it('an administrator without an authenticator gets no session — only the enrolment step', async () => {
+  it('an administrator without an authenticator (only data predating O-12) gets no session — only the enrolment step', async () => {
     const id = await insertUser(h, { username: 'fresh.admin' })
-    await assignSystemProfile(h, id, ids.adminProfile)
+    await assignSystemProfileBypassingO12(h, id, ids.adminProfile)
     const res = await passwordStep('fresh.admin')
     expect(res.statusCode).toBe(202)
     expect(res.json()).toEqual({ next: 'mfa_enroll', expiresInSeconds: 600 })
@@ -167,10 +182,13 @@ describe('who must use a second factor (§3.2.1)', () => {
   })
 })
 
+// The sign-in enrolment flow is the same whoever must enrol (the owner at first sign-in, everyone under the
+// all_users policy). These tests use administrators without an authenticator, a state that only data predating
+// O-12 can have, created with assignSystemProfileBypassingO12.
 describe('enrolment at sign-in (§3.2.4)', () => {
   it('activates only after a code from the app proves the setup, then returns recovery codes and a second-factor session', async () => {
     const id = await insertUser(h, { username: 'enrol.admin' })
-    await assignSystemProfile(h, id, ids.adminProfile)
+    await assignSystemProfileBypassingO12(h, id, ids.adminProfile)
     const challenge = await challengeFor('enrol.admin', 'mfa_enroll')
     const started = await call(h, { method: 'POST', url: '/api/auth/mfa/enroll/start', cookie: challenge })
     expect(started.statusCode).toBe(200)
@@ -213,7 +231,7 @@ describe('enrolment at sign-in (§3.2.4)', () => {
 
   it('refuses a confirmation after the pending enrolment expired', async () => {
     const id = await insertUser(h, { username: 'slow.admin' })
-    await assignSystemProfile(h, id, ids.adminProfile)
+    await assignSystemProfileBypassingO12(h, id, ids.adminProfile)
     const challenge = await challengeFor('slow.admin', 'mfa_enroll')
     const started = await call(h, { method: 'POST', url: '/api/auth/mfa/enroll/start', cookie: challenge })
     const secret = base32Decode(started.json<{ secret: string }>().secret)
@@ -226,7 +244,7 @@ describe('enrolment at sign-in (§3.2.4)', () => {
 
   it('never overwrites an existing authenticator from the sign-in path', async () => {
     const id = await insertUser(h, { username: 'raced.admin' })
-    await assignSystemProfile(h, id, ids.adminProfile)
+    await assignSystemProfileBypassingO12(h, id, ids.adminProfile)
     const challenge = await challengeFor('raced.admin', 'mfa_enroll')
     const started = await call(h, { method: 'POST', url: '/api/auth/mfa/enroll/start', cookie: challenge })
     const secret = base32Decode(started.json<{ secret: string }>().secret)
@@ -322,7 +340,7 @@ describe('the second step (§3.2.2–§3.2.4)', () => {
   it('accepts each recovery code once, and reports how many remain', async () => {
     const { recoveryCodes } = await (async () => {
       const id = await insertUser(h, { username: 'recovery.admin' })
-      await assignSystemProfile(h, id, ids.adminProfile)
+      await assignSystemProfileBypassingO12(h, id, ids.adminProfile)
       return enrollAtSignIn('recovery.admin')
     })()
     const code = recoveryCodes[0] ?? ''
@@ -410,11 +428,12 @@ describe('the second step (§3.2.2–§3.2.4)', () => {
 })
 
 describe('enforcement on every request (§3.2.1)', () => {
-  it('ends a password-only session as soon as its user is appointed administrator', async () => {
+  it('ends a password-only session as soon as its account needs a second factor (defense behind O-12)', async () => {
     const id = await insertUser(h, { username: 'promoted.staff' })
     const cookie = await login(h, 'promoted.staff')
     expect((await me(cookie)).statusCode).toBe(200)
-    await assignSystemProfile(h, id, ids.adminProfile)
+    // O-12 refuses this appointment through every normal path; data predating O-12 is the only way to get here.
+    await assignSystemProfileBypassingO12(h, id, ids.adminProfile)
     const res = await call(h, { method: 'GET', url: '/api/admin/users', cookie })
     expect(res.statusCode).toBe(401)
     expect(errorCode(res)).toBe('MFA_REQUIRED')
@@ -533,7 +552,7 @@ describe('self-service (§3.2.4; ASVS V7.5.1)', () => {
 
   it('regenerating recovery codes invalidates the earlier ones', async () => {
     const id = await insertUser(h, { username: 'regen.admin' })
-    await assignSystemProfile(h, id, ids.adminProfile)
+    await assignSystemProfileBypassingO12(h, id, ids.adminProfile)
     const { cookie, recoveryCodes: before } = await enrollAtSignIn('regen.admin')
     const res = await call(h, {
       method: 'POST',
@@ -592,15 +611,19 @@ describe('administrator reset of a lost authenticator (§3.2.4; ASVS V6.4.4)', (
     expect((await auditRows(h, 'user.mfa_reset')).at(-1)).toMatchObject({ actor_user_id: ids.admin, target_id: String(id), details: { hadAuthenticator: true, sessionsEnded: 1 } })
   })
 
-  it('follows the escalation rules: not your own (A4), not an administrator (A2), not the owner (A3) — the owner may reset an administrator', async () => {
+  it('follows the escalation rules: not your own (A4), not an administrator (A2), not the owner (A3) — the owner may reset an administrator once demoted (O-12)', async () => {
     const otherAdmin = await insertUser(h, { username: 'other.admin' })
-    await assignSystemProfile(h, otherAdmin, ids.adminProfile)
-    await enrollMfa(h, otherAdmin)
+    await appointAdministrator(h, otherAdmin, ids.adminProfile)
     for (const target of [ids.admin, otherAdmin, ids.owner]) {
       const res = await call(h, { method: 'POST', url: `/api/admin/users/${String(target)}/reset-mfa`, cookie: adminCookie })
       expect(res.statusCode).toBe(403)
     }
     expect(await h.ownerDb.selectFrom('user_mfa').select('user_id').where('user_id', 'in', [ids.admin, otherAdmin, ids.owner]).execute()).toHaveLength(3)
+    // O-12: an administrator keeps an authenticator; the owner removes the administrator profiles first.
+    const whileAdmin = await call(h, { method: 'POST', url: `/api/admin/users/${String(otherAdmin)}/reset-mfa`, cookie: ownerCookie })
+    expect(whileAdmin.statusCode).toBe(409)
+    expect(errorCode(whileAdmin)).toBe('ADMIN_MFA_REQUIRED')
+    await setAccess(otherAdmin, [])
     const byOwner = await call(h, { method: 'POST', url: `/api/admin/users/${String(otherAdmin)}/reset-mfa`, cookie: ownerCookie })
     expect(byOwner.statusCode).toBe(200)
   })
@@ -630,6 +653,186 @@ describe('administrator reset of a lost authenticator (§3.2.4; ASVS V6.4.4)', (
   })
 })
 
+describe('administrator appointment requires an enrolled authenticator (decision O-12)', () => {
+  const adminRoute = (cookie: string) => call(h, { method: 'GET', url: '/api/admin/users', cookie })
+  const profileRows = (userId: number) => h.ownerDb.selectFrom('user_system_profiles').select('profile_id').where('user_id', '=', userId).execute()
+
+  it('refuses a direct API appointment of a user without an authenticator — even with one pending — and changes nothing', async () => {
+    const id = await insertUser(h, { username: 'o12.candidate' })
+    const before = await h.ownerDb.selectFrom('users').select('version').where('id', '=', id).executeTakeFirstOrThrow()
+    const refused = await setAccess(id, [ids.adminProfile])
+    expect(refused.statusCode).toBe(409)
+    expect(refused.json()).toMatchObject({ error: { code: 'ADMIN_MFA_REQUIRED', details: { rule: 'O-12' } } })
+    expect(await profileRows(id)).toEqual([])
+    expect((await h.ownerDb.selectFrom('users').select('version').where('id', '=', id).executeTakeFirstOrThrow()).version).toBe(before.version)
+    expect((await auditRows(h, 'user.access_changed')).filter((e) => e.target_id === String(id))).toEqual([])
+
+    // A started but unconfirmed enrolment is not an authenticator.
+    const cookie = await login(h, 'o12.candidate')
+    const started = await call(h, { method: 'POST', url: '/api/me/mfa/enroll/start', cookie, payload: { currentPassword: GOOD_PASSWORD } })
+    expect(started.statusCode).toBe(200)
+    expect((await setAccess(id, [ids.adminProfile])).statusCode).toBe(409)
+
+    const secret = base32Decode(started.json<{ secret: string }>().secret)
+    expect((await call(h, { method: 'POST', url: '/api/me/mfa/enroll/confirm', cookie, payload: { code: totpCode(secret, now()) } })).statusCode).toBe(200)
+    expect((await setAccess(id, [ids.adminProfile])).statusCode).toBe(200)
+    expect(await profileRows(id)).toEqual([{ profile_id: ids.adminProfile }])
+  })
+
+  it('is decided on the server, whatever the request claims', async () => {
+    const id = await insertUser(h, { username: 'o12.claims' })
+    const { version } = await h.ownerDb.selectFrom('users').select('version').where('id', '=', id).executeTakeFirstOrThrow()
+    // Extra fields claiming enrolment are rejected, not trusted.
+    const res = await call(h, {
+      method: 'PUT',
+      url: `/api/admin/users/${String(id)}/access`,
+      cookie: ownerCookie,
+      headers: { 'idempotency-key': randomUUID() },
+      payload: { version, systemProfileIds: [ids.adminProfile], warehouseAssignments: [], mfaEnrolled: true }
+    })
+    expect(res.statusCode).toBe(400)
+    // A non-owner cannot appoint anyone at all (A1), enrolled or not.
+    const enrolled = await insertUser(h, { username: 'o12.enrolled' })
+    await enrollMfa(h, enrolled)
+    expect((await setAccess(enrolled, [ids.adminProfile], adminCookie)).statusCode).toBe(403)
+    expect(await profileRows(enrolled)).toEqual([])
+  })
+
+  it('never blocks removing administrator profiles, or warehouse-only changes', async () => {
+    const legacy = await insertUser(h, { username: 'o12.legacy' })
+    await assignSystemProfileBypassingO12(h, legacy, ids.adminProfile)
+    expect((await setAccess(legacy, [])).statusCode).toBe(200)
+    expect(await profileRows(legacy)).toEqual([])
+    const plain = await insertUser(h, { username: 'o12.warehouse.only' })
+    const warehouse = await insertWarehouse(h, 'O12-WH')
+    const clerk = await insertProfile(h, 'O12 clerk', 'warehouse', ['asset.view'])
+    const { version } = await h.ownerDb.selectFrom('users').select('version').where('id', '=', plain).executeTakeFirstOrThrow()
+    const res = await call(h, {
+      method: 'PUT',
+      url: `/api/admin/users/${String(plain)}/access`,
+      cookie: ownerCookie,
+      headers: { 'idempotency-key': randomUUID() },
+      payload: { version, systemProfileIds: [], warehouseAssignments: [{ warehouseId: warehouse, profileId: clerk }] }
+    })
+    expect(res.statusCode, res.body).toBe(200)
+  })
+
+  it('applies to existing sessions: no rights before enrolment; the enrolled session gains them at once', async () => {
+    const id = await insertUser(h, { username: 'o12.session' })
+    const cookie = await login(h, 'o12.session')
+    expect((await setAccess(id, [ids.adminProfile])).statusCode).toBe(409)
+    expect((await adminRoute(cookie)).statusCode).toBe(403)
+    expect((await me(cookie)).statusCode).toBe(200)
+    const started = await call(h, { method: 'POST', url: '/api/me/mfa/enroll/start', cookie, payload: { currentPassword: GOOD_PASSWORD } })
+    const secret = base32Decode(started.json<{ secret: string }>().secret)
+    expect((await call(h, { method: 'POST', url: '/api/me/mfa/enroll/confirm', cookie, payload: { code: totpCode(secret, now()) } })).statusCode).toBe(200)
+    expect((await setAccess(id, [ids.adminProfile])).statusCode).toBe(200)
+    expect((await adminRoute(cookie)).statusCode).toBe(200)
+  })
+
+  it('cannot be undone afterwards: an administrator never loses the authenticator, but may replace it', async () => {
+    const id = await insertUser(h, { username: 'o12.keeper' })
+    await appointAdministrator(h, id, ids.adminProfile)
+    const cookie = await login(h, 'o12.keeper')
+    const disable = await call(h, { method: 'POST', url: '/api/me/mfa/disable', cookie, payload: { currentPassword: GOOD_PASSWORD, code: await totpFor(h, id) } })
+    expect(disable.statusCode).toBe(403)
+    expect(errorCode(await call(h, { method: 'POST', url: `/api/admin/users/${String(id)}/reset-mfa`, cookie: ownerCookie }))).toBe('ADMIN_MFA_REQUIRED')
+    expect((await call(h, { method: 'POST', url: `/api/admin/users/${String(id)}/reset-mfa`, cookie: adminCookie })).statusCode).toBe(403)
+    expect(await h.ownerDb.selectFrom('user_mfa').select('user_id').where('user_id', '=', id).executeTakeFirst()).toBeDefined()
+    // Replacing (old one out, new one in, one transaction) is allowed.
+    const started = await call(h, {
+      method: 'POST',
+      url: '/api/me/mfa/enroll/start',
+      cookie,
+      payload: { currentPassword: GOOD_PASSWORD, code: await totpFor(h, id, { offsetSeconds: 30, keepSingleUse: true }) }
+    })
+    expect(started.statusCode, started.body).toBe(200)
+    const secret = base32Decode(started.json<{ secret: string }>().secret)
+    const replaced = await call(h, { method: 'POST', url: '/api/me/mfa/enroll/confirm', cookie, payload: { code: totpCode(secret, now()) } })
+    expect(replaced.statusCode, replaced.body).toBe(200)
+    expect((await adminRoute(cookie)).statusCode).toBe(200)
+  })
+
+  it('is enforced by the database itself, for any code path and any role', async () => {
+    const id = await insertUser(h, { username: 'o12.database' })
+    for (const db of [h.appDb, h.ownerDb]) {
+      await expect(db.insertInto('user_system_profiles').values({ user_id: id, profile_id: ids.adminProfile, granted_by: null }).execute()).rejects.toThrow(
+        /require an enrolled authenticator/
+      )
+    }
+    expect(await profileRows(id)).toEqual([])
+    const admin = await insertUser(h, { username: 'o12.database.admin' })
+    await appointAdministrator(h, admin, ids.adminProfile)
+    await expect(h.appDb.deleteFrom('user_mfa').where('user_id', '=', admin).execute()).rejects.toThrow(/require an enrolled authenticator/)
+    expect(await h.ownerDb.selectFrom('user_mfa').select('user_id').where('user_id', '=', admin).executeTakeFirst()).toBeDefined()
+    // Replacing inside one transaction is fine; the check runs at commit.
+    await h.appDb.transaction().execute(async (trx) => {
+      const row = await trx.selectFrom('user_mfa').select(['totp_secret', 'totp_key_id']).where('user_id', '=', admin).executeTakeFirstOrThrow()
+      await trx.deleteFrom('user_mfa').where('user_id', '=', admin).execute()
+      await trx.insertInto('user_mfa').values({ user_id: admin, totp_secret: row.totp_secret, totp_key_id: row.totp_key_id, totp_last_step: 0 }).execute()
+    })
+    // The server's role cannot switch the check off.
+    await expect(sql`ALTER TABLE wam.user_mfa DISABLE TRIGGER user_mfa_kept_by_administrators`.execute(h.appDb)).rejects.toThrow(/must be owner|permission denied/)
+    await expect(sql`SET session_replication_role = replica`.execute(h.appDb)).rejects.toThrow(/permission denied/)
+  })
+
+  it('the database check serializes concurrent transactions on the same user (row lock)', async () => {
+    const id = await insertUser(h, { username: 'o12.interleave' })
+    await enrollMfa(h, id)
+    const second = connect(h.tdb.urls.app)
+    try {
+      let checked!: () => void
+      let mayCommit!: () => void
+      const aChecked = new Promise<void>((resolve) => (checked = resolve))
+      const aMayCommit = new Promise<void>((resolve) => (mayCommit = resolve))
+      // A: appoints and runs the check now (it passes: the authenticator exists), then waits before committing.
+      const a = h.appDb.transaction().execute(async (trx) => {
+        await trx.insertInto('user_system_profiles').values({ user_id: id, profile_id: ids.adminProfile, granted_by: null }).execute()
+        await sql`SET CONSTRAINTS ALL IMMEDIATE`.execute(trx)
+        checked()
+        await aMayCommit
+      })
+      await aChecked
+      // B: removes the authenticator. Its check must wait for A and then see A's appointment.
+      const b = second.transaction().execute(async (trx) => {
+        await trx.deleteFrom('user_mfa').where('user_id', '=', id).execute()
+        await sql`SET CONSTRAINTS ALL IMMEDIATE`.execute(trx)
+      })
+      const bOutcome = b.then(
+        () => 'committed',
+        (err: unknown) => String(err)
+      )
+      await new Promise((resolve) => setTimeout(resolve, 300))
+      mayCommit()
+      await a
+      expect(await bOutcome).toMatch(/require an enrolled authenticator/)
+      expect(await h.ownerDb.selectFrom('user_mfa').select('user_id').where('user_id', '=', id).executeTakeFirst()).toBeDefined()
+    } finally {
+      await second.destroy()
+    }
+  })
+
+  it('holds under concurrent appointment and authenticator removal', async () => {
+    const outcomes = new Set<string>()
+    for (let i = 0; i < 6; i += 1) {
+      const id = await insertUser(h, { username: `o12.race${String(i)}` })
+      await enrollMfa(h, id)
+      const cookie = await login(h, `o12.race${String(i)}`)
+      const code = await totpFor(h, id, { offsetSeconds: 30, keepSingleUse: true })
+      const [appoint, disable] = await Promise.all([
+        setAccess(id, [ids.adminProfile]),
+        call(h, { method: 'POST', url: '/api/me/mfa/disable', cookie, payload: { currentPassword: GOOD_PASSWORD, code } })
+      ])
+      outcomes.add(`${String(appoint.statusCode)}/${String(disable.statusCode)}`)
+      // Exactly one wins; never both, never a server error.
+      expect([`200/403`, `409/204`]).toContain(`${String(appoint.statusCode)}/${String(disable.statusCode)}`)
+      const holds = (await profileRows(id)).length === 0 || (await h.ownerDb.selectFrom('user_mfa').select('user_id').where('user_id', '=', id).executeTakeFirst()) !== undefined
+      expect(holds).toBe(true)
+    }
+    expect(outcomes.size).toBeGreaterThanOrEqual(1)
+  })
+})
+
 describe('database safeguards', () => {
   it('lets the server role advance counters but never rewrite a secret or the policy row', async () => {
     await expect(sql`UPDATE wam.user_mfa SET totp_secret = totp_secret`.execute(h.appDb)).rejects.toThrow(/permission denied/)
@@ -650,7 +853,7 @@ describe('database safeguards', () => {
 describe('second-step and enrolment records are cleaned up', () => {
   it('maintenance removes expired challenges and pending enrolments', async () => {
     const id = await insertUser(h, { username: 'cleanup.admin' })
-    await assignSystemProfile(h, id, ids.adminProfile)
+    await assignSystemProfileBypassingO12(h, id, ids.adminProfile)
     const challenge = await challengeFor('cleanup.admin', 'mfa_enroll')
     await call(h, { method: 'POST', url: '/api/auth/mfa/enroll/start', cookie: challenge })
     await sql`UPDATE wam.login_challenges SET created_at = now() - interval '1 hour', expires_at = now() - interval '30 minutes' WHERE user_id = ${id}`.execute(h.superDb)

@@ -62,7 +62,7 @@ features exist (Phase 1B-3 onward). Their exact meaning for approvals and transf
 
 ### 2.3 Rules that prevent privilege escalation
 
-For every actor **other than the owner**:
+For every actor **other than the owner** (A3's reset rule and A7 also bind the owner):
 
 | # | Rule | Enforced by |
 |---|---|---|
@@ -72,6 +72,7 @@ For every actor **other than the owner**:
 | A4 | Nobody may change **their own** access, status or setup code (they change their password through the normal function). | service layer |
 | A5 | A holder of `profile.manage` may not edit or delete a profile that is assigned to **themselves**. | service layer |
 | A6 | Assigning a warehouse profile requires `user.manage`; the profile must be active and of warehouse scope, and the warehouse must exist. | service layer + composite foreign keys |
+| A7 | **Enrol first, then appoint** (decision O-12): a system (administrator) profile can be held only by a user with an enrolled authenticator. Appointing a user without one is refused (`409 ADMIN_MFA_REQUIRED`; a pending, unconfirmed enrolment does not count); an administrator's authenticator cannot be removed (self-service removal refused; an MFA reset requires removing the administrator profiles first); replacing it in one step stays possible. Removing administrator profiles is always allowed. Applies to everyone, the owner included; the owner account itself is exempt (it needs no profile and is recovered only by the owner CLI), and an ownership transfer strips administrator profiles from both accounts. | service layer under the user's row lock **+ database** (constraint triggers checked at commit, migration 0004, which also refuses to run on a database that already breaks the rule) |
 
 Residual risk, accepted and visible: two non-owner administrators could grant each other warehouse access. Every
 grant is audited with before/after values; the owner can restrict `user.manage` to themselves.
@@ -139,7 +140,7 @@ Written before the implementation (slice 1B-2c), as the owner required; the code
 | Account | Second factor |
 |---|---|
 | The owner | **Always required.** |
-| Administrators (anyone assigned a system profile, active or not — the definition rules A2–A4 use) | **Always required.** |
+| Administrators (anyone assigned a system profile, active or not — the definition rules A2–A4 use) | **Always required, and enrolled before the appointment** (rule A7, decision O-12). |
 | Anyone who has enrolled an authenticator | Always used at sign-in — enrolling cannot be bypassed later. |
 | All other users | Required when the **security policy** says `all_users`; otherwise optional (self-service enrolment). |
 
@@ -203,7 +204,8 @@ as before (`200`).
 Enrolling, replacing or removing ends the user's **other** sessions (a credential change, V7.4.3).
 
 **Administrator reset** (`POST /api/admin/users/:id/reset-mfa`, `user.manage`, rules A2–A4: nobody resets their own,
-only the owner resets an administrator, nobody — the owner included — resets the owner account over HTTP): removes the authenticator and recovery codes **and at
+only the owner resets an administrator — after first removing the administrator profiles (A7) — and nobody, the owner
+included, resets the owner account over HTTP): removes the authenticator and recovery codes **and at
 the same time** clears the password, ends all sessions and issues a new setup code. The person proves their identity
 to the administrator the same way as at account creation — in person or by a telephone call to a known number — and
 receives the setup code that way (V6.4.4). Someone who knows only the old password therefore cannot enrol their own
@@ -220,7 +222,7 @@ second factor (V6.4.3).
 | Malicious lockout of a user | The lock can only be triggered by someone who **already knows the password** — that is, when the password is compromised and must be reset anyway. Password-step throttling keeps its sliding 15-minute windows (§3.1); nothing there locks permanently. |
 | Unlocking | A **password reset** clears the lock: an administrator issues a setup code (or performs an MFA reset); for the owner, `npm run owner -- recover`. The attacker loses the password at the same time. |
 | User lost the phone | Sign in with a recovery code, then replace the authenticator. Without recovery codes: administrator reset (§3.2.4). |
-| Administrator locked out | The owner resets them in the admin panel. Administrators cannot reset each other (A2). |
+| Administrator locked out or phone lost | With recovery codes: the administrator signs in with one and replaces the authenticator. Otherwise the owner removes the administrator profiles, resets the account in the admin panel, and appoints again once the person has enrolled a new authenticator (A7). Administrators cannot reset each other (A2). |
 | **Owner locked out** | The owner can never be locked out of the system as a whole: `npm run owner -- recover --yes` (new password, lock cleared, authenticator kept) or `npm run owner -- recover --reset-mfa --yes` (also removes the authenticator; the owner enrols again at the next sign-in, after setting the new password with the setup code). Both need operating-system access to the server **and** the migration credentials — the two-person break-glass control of §1 — and both are audited. |
 | Encryption key lost or wrong | Authenticator codes cannot be checked; the server logs a configuration error and refuses second-factor sign-in rather than skipping it. Recovery: restore the key from its backup. If it is truly lost, every enrolled user must be reset (owner by CLI with `--reset-mfa`, then the owner resets the others). **The key must be backed up, separately from the database backups** (Phase 1D). |
 | Server clock wrong | Codes fail for everyone. The server must keep time by NTP (Phase 1E deployment checklist); the ±1-step tolerance absorbs small drift. |
@@ -230,8 +232,9 @@ second factor (V6.4.3).
 
 - **First enrolment trusts the password.** Someone who knows a user's password before that user enrols could enrol
   their own authenticator. Safeguards: the owner enrols in the same sitting as the bootstrap; resets always include a
-  new password via a setup code; every enrolment is audited and the user list shows who has enrolled. Recommended
-  practice: appoint administrators only after they have enrolled.
+  new password via a setup code; every enrolment is audited and the user list shows who has enrolled; administrators
+  can be appointed only after they have enrolled (A7), so the owner can confirm the enrolment — for example by
+  watching it happen — before granting any administrator right.
 - Real-time phishing (a fake page relaying codes) is not stopped by TOTP; phishing-resistant authenticators
   (FIDO2/passkeys) are an ASVS Level 3 measure and a possible later addition.
 - No automatic notification of suspicious sign-ins (V6.3.5, Level 3); the audit trail records them.
