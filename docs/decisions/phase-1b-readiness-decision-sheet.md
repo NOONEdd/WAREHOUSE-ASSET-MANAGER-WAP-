@@ -3,6 +3,10 @@
 Date: 2026-10-26 · Branch: `phase-1a/repo-safety-net` · Status: **for owner review. Nothing in this document is approved
 or implemented.** Phase 1B has not been started and needs separate explicit authorization.
 
+> **Update 2026-10-27:** the current status of every decision below is kept in
+> [`decision-register.md`](decision-register.md); this sheet remains the detailed analysis as of 2026-10-26.
+> Phase 1B-1 has since been authorized and implemented; D-08 no longer blocks it (see `../STATUS.md`).
+
 Labels used: **[V]** verified by me with a command or an official page, **[P]** Phase 0 report statement (not re-verified),
 **[R]** my recommendation, **[U]** unknown / unverified.
 

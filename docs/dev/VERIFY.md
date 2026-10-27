@@ -98,10 +98,11 @@ reports known findings (e.g. `xlsx@0.18.5`, no fixed version on npm). It becomes
 (xlsx handling) is made. Registry-signature verification of the lockfiles is a separate, reproducible
 procedure: see [`DEPENDENCY_VERIFICATION.md`](DEPENDENCY_VERIFICATION.md).
 
-## Server skeleton
+## Server
 
-`server/` is a separate package containing no application code (see `server/README.md`). Its checks are
+`server/` is a separate package (Phase 1B-1 foundation; see `server/README.md`). Its checks are
 `cd server && npm ci --ignore-scripts && npm run verify` (Node 24) and are not part of the root `verify`.
+Its integration tests need PostgreSQL 16+ server programs and a non-root user (WSL2 on Windows).
 
 ## Test dispositions
 
