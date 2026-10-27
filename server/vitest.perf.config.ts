@@ -1,7 +1,7 @@
 import { defineConfig } from 'vitest/config'
 
 // Performance measurement (`npm run test:perf`), kept out of `npm test`:
-// it seeds a realistic synthetic volume, so it takes about a minute and its
+// it seeds a realistic synthetic volume, so it is slower (about 15 s) and its
 // timings depend on the machine. Same throwaway-cluster harness and safety
 // guarantees as the integration tests.
 export default defineConfig({

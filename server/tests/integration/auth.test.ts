@@ -136,6 +136,7 @@ describe('sessions (ASVS V7)', () => {
     const res = await call(h, { method: 'POST', url: '/api/auth/logout', cookie })
     expect(res.statusCode).toBe(204)
     expect(res.headers['set-cookie']).toMatch(new RegExp(`^${COOKIE_NAME}=; Max-Age=0;`))
+    expect(res.headers['clear-site-data']).toBe('"cache", "cookies", "storage"')
     expect((await me(cookie)).statusCode).toBe(401)
   })
 

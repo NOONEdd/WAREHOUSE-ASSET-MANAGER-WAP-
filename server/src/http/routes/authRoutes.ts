@@ -135,7 +135,12 @@ export function registerAuthRoutes(app: FastifyInstance, options: AuthRouteOptio
         target: { type: 'session', id: ended.sessionId }
       })
     }
-    return reply.header('set-cookie', clearedSessionCookie(cookie)).status(204).send()
+    // ASVS 5.0.0 V14.3.1: also ask the browser to drop anything it kept for this session.
+    return reply
+      .header('set-cookie', clearedSessionCookie(cookie))
+      .header('clear-site-data', '"cache", "cookies", "storage"')
+      .status(204)
+      .send()
   })
 
   app.post(

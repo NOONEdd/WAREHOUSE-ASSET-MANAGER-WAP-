@@ -41,6 +41,20 @@ describe('GET /health/live', () => {
     expect(res.headers['x-request-id']).toMatch(UUID)
     expect(res.headers['cache-control']).toBe('no-store')
     expect(res.headers['x-content-type-options']).toBe('nosniff')
+    expect(res.headers['referrer-policy']).toBe('no-referrer')
+    expect(res.headers['content-security-policy']).toBe("default-src 'none'; frame-ancestors 'none'")
+    // Plain-http development origin: no HSTS.
+    expect(res.headers['strict-transport-security']).toBeUndefined()
+  })
+
+  it('sends HSTS when the public origin is https', async () => {
+    const secure = buildApp({ db, logger: false, publicOrigin: 'https://wam.example', sessions: { idleMinutes: 30, absoluteHours: 12 } })
+    try {
+      const res = await secure.inject({ method: 'GET', url: '/health/live' })
+      expect(res.headers['strict-transport-security']).toBe('max-age=31536000; includeSubDomains')
+    } finally {
+      await secure.close()
+    }
   })
 
   it('ignores a client-supplied X-Request-Id', async () => {

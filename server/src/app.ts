@@ -48,11 +48,17 @@ export function buildApp(options: AppOptions): FastifyInstance {
     ajv: { customOptions: { removeAdditional: false } }
   })
 
+  const https = options.publicOrigin.startsWith('https://')
   app.addHook('onRequest', (request, reply, done) => {
     reply.header('x-request-id', request.id)
-    // API responses are per-user data; never let a browser or proxy cache them.
+    // API responses are per-user data; never let a browser or proxy cache them (ASVS 5.0.0 V14.3.2).
     reply.header('cache-control', 'no-store')
-    reply.header('x-content-type-options', 'nosniff')
+    reply.header('x-content-type-options', 'nosniff') // V3.4.4
+    reply.header('referrer-policy', 'no-referrer') // V3.4.5
+    // JSON responses need no content and must never be framed (V3.4.3, V3.4.6).
+    // The web UI (Phase 1C) sets its own policy for its pages.
+    reply.header('content-security-policy', "default-src 'none'; frame-ancestors 'none'")
+    if (https) reply.header('strict-transport-security', 'max-age=31536000; includeSubDomains') // V3.4.1
     done()
   })
 
