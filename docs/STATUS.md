@@ -1,58 +1,77 @@
 # Project status
 
-Snapshot: **2026-10-27**. Replace this file's contents at the end of each work session; history stays in Git.
+Snapshot: **2026-10-27, second session**. Replace this file's contents at the end of each work session; history
+stays in Git.
 
 ## Where things are
 
 | Reference | Commit | On GitHub? | Content |
 |---|---|---|---|
 | `main` | `efbd65a9ca123c1ac03d464087628097671a0290` | yes (unchanged) | Desktop baseline |
-| tag `desktop-baseline-efbd65a` | tag object `6dd8a5dd58b3d43e78abdfe2113128b9947bf6b5` → `efbd65a9…` | **no** — push refused (HTTP 403) by this session's permissions; see [owner actions](#owner-actions) | Protects the baseline |
-| `phase-1a/repo-safety-net` | `c819994e80cfdc0262677b0e359eb14a5b9765cc` | **yes**, verified with `git ls-remote` | Phase 1A, imported from `WAM_Phase1A_closure.bundle` |
-| `ccr-1860034b-yp0csr` (session branch) | `eeb25fea8448c400b42c6d2f6f0700e19e47f5f4` | **yes** — pushed with your approval (O-01), verified with `git ls-remote` | Phase 1A + Phase 1B-1 server foundation + these documents |
+| tag `desktop-baseline-efbd65a` | tag object `6dd8a5dd58b3d43e78abdfe2113128b9947bf6b5` → `efbd65a9…` | **no** — this session cannot push tags; see [owner actions](#owner-actions) | Protects the baseline |
+| `phase-1a/repo-safety-net` | `c819994e80cfdc0262677b0e359eb14a5b9765cc` | yes | Phase 1A |
+| `ccr-1860034b-yp0csr` (session branch) | GitHub: `eeb25fe` (Phase 1B-1). **Locally ahead by the commits below** | **partly** — new commits await approval O-10 | Phase 1B-1 + 1B-2 |
 
-How Phase 1A reached GitHub: this session may push only to its session branch, so the verified Phase 1A commits
-were pushed there (a fast-forward, no force), and `phase-1a/repo-safety-net` was created on GitHub from it via
-the GitHub API. Both point to exactly `c819994e…`. Nothing was merged into `main`; nothing was deployed.
+Commits made this session, local only until O-10 is approved:
 
-## Verification (run in this session, Linux cloud sandbox; **nothing has been run on Windows**)
+| Commit | Content |
+|---|---|
+| `28c9fcd` | Decisions D-05 (online-only) and O-09 (owner-controlled administration) recorded; `security/identity-and-access.md` specification |
+| `b7632d3` | Phase 1B-2a: identity schema, Argon2id, sessions, throttling, request-forgery protection, idempotency, owner CLI, audit trail |
+| `fd0a5dc` | Phase 1B-2b: admin API (users, access, profiles, job titles, warehouses, audit), escalation rules A1–A6, performance check |
+| `fc53b1a` | Security response headers (CSP, `nosniff`, referrer policy, HSTS on https, `Clear-Site-Data` at logout) |
+| the commit containing this file | Documentation of the verified result |
 
-| Check | Environment | Result |
-|---|---|---|
-| Bundle integrity (`git bundle verify`, `git fsck`) | — | OK; complete history; ZIP is byte-identical to the branch tree |
-| Desktop source unchanged vs baseline | `git diff efbd65a -- src resources …` | empty |
-| Baseline test failures reproduced | `efbd65a`, Node 22.22.0 | 552 tests: 529 passed, 23 failed — exactly as the dispositions doc says |
-| Root `npm ci --ignore-scripts` | Node 22.22.0 | exit 0; lockfile unchanged |
-| Root `npm run verify` (env check, 533 tests, build) | Node 22.22.0 **and** Node 24.22.1 | exit 0 on both; 533/533 |
-| Server `npm run verify` (Phase 1A skeleton) | Node 24.22.1 | 2/2 tests |
-| Server Phase 1B-1: typecheck, lint, build | Node 24.22.1 | exit 0 |
-| Server Phase 1B-1: tests | Node 24.22.1, PostgreSQL 16.15, non-root user | 58/58 (22 unit, 36 integration) |
-| Safety-test mutation check (14 deliberate defects) | same | 14/14 caught |
-| Runbook smoke test with the built server | same | refuses before migration and as owner; migrates; health OK; SIGTERM exit 0; no password in logs |
-| Registry signatures, both lockfiles | — | 839/839 verified |
-| `npm audit` | root / server | root: 15 findings (4 in production dependencies) — unchanged, see review F-4/F-5; server: 0 |
-| `npm audit signatures` (Sigstore) | — | could not download in the sandbox; please run on your network |
+Nothing was merged into `main`, tagged, released or deployed. No desktop file changed (verified with `git diff`).
 
-## Done this session
+## Current phase
 
-1. Discovery and Phase 1A import, review and publication (above).
-2. Architecture and security review: [`architecture/web-architecture-and-security-review.md`](architecture/web-architecture-and-security-review.md).
-   Two findings affect the **desktop app in use today**: import "update" erases data (F-3) and Electron 43.2.0 has
-   published security fixes not yet applied (F-4).
-3. Decision register: [`decisions/decision-register.md`](decisions/decision-register.md). Security matrix:
-   [`security/security-acceptance-matrix.md`](security/security-acceptance-matrix.md). Plan: [`plan/30-day-plan.md`](plan/30-day-plan.md).
-4. Phase 1B-1 server foundation, isolated in `server/` (see [`../server/README.md`](../server/README.md)). No business
-   tables, authentication or company data. No desktop file changed.
+**Phase 1B-2 (identity and access) — server side complete except MFA.** The next slice is **1B-2c, MFA**
+(decision O-07), then **1B-3** (asset schema and SQLite migration rehearsal).
 
-## Not done
+## Verification of this session (Linux sandbox; **nothing run on Windows**)
 
-Phase 1B-2 onward; any desktop change; anything on Windows; PostgreSQL 17 testing; deployment of any kind.
+| Check | Result |
+|---|---|
+| `server`: typecheck, lint (`strictTypeChecked`), build | exit 0 |
+| `server`: tests, Node 24.22.1, PostgreSQL 16.15, non-root user | **222/222** pass (unit 97 in 6 files, integration 125 in 9 files) |
+| Deliberate-defect check: 30 safeguards removed one at a time (escalation rules A1–A6, 404 isolation, session expiry and revocation, throttling, setup-code single use and expiry, CSRF checks, cookie tossing, idempotency fingerprint, `is_owner` grant, audit trigger, secret guard, …) | **30/30 caught** by the suite; source restored byte-identical |
+| End-to-end runbook with the **built** server as real processes: migrate → owner bootstrap → setup code → login → `/api/me` → create warehouse → forged POST refused → logout | all as expected; **no password, setup code or session token in the server log** |
+| `npm audit` (server) | 0 vulnerabilities |
+| Desktop app | unchanged; its tests were not re-run this session (no desktop file changed) |
+| ASVS version | 5.0.0 confirmed from OWASP's own repository; requirement text read from the official CSV |
+
+### Performance (synthetic data; targets fixed before the first measurement)
+
+Volume: 2,000 users, 50 warehouses, 30 profiles, 6,000 warehouse assignments, 5,000 sessions, 200,000 audit events,
+10,000 recent failed logins. Sandbox: 4 vCPU Xeon 2.1 GHz, 16 GB RAM; PostgreSQL with `fsync=off` (writes faster
+than production). Real HTTP on loopback. Two runs; p95 shown as run 2 / run 1, other columns from run 2.
+
+| Measurement | Target | p95 (run 2 / run 1) | p50 | Throughput |
+|---|---|---|---|---|
+| Login (Argon2id), 10 concurrent, 100 requests | ≤ 1,000 ms | **148 / 156 ms** | 80.7 ms | 109 /s |
+| `GET /api/me`, 20 concurrent, 2,000 requests | ≤ 100 ms | **38 / 46 ms** | 27.5 ms | 703 /s |
+| Admin user search, 20 concurrent, 1,000 requests | ≤ 100 ms | **38 / 46 ms** | 23.1 ms | 776 /s |
+| Warehouse audit page (of 200,000 events), 20 concurrent, 1,000 requests | ≤ 100 ms | **38 / 33 ms** | 24.5 ms | 756 /s |
+
+`EXPLAIN` of the exact per-request queries: session lookup and the audit page use their indexes; no sequential scan
+on any growing table. **Not yet measured:** production hardware, asset queries (do not exist yet), the D-04
+concurrency figure (unconfirmed).
+
+## Known limitations (details: `security/identity-and-access.md` §8)
+
+1. **No MFA yet** — ASVS Level 2 requires it. Do not expose the server beyond a trusted network before 1B-2c.
+2. **Deployment blocker:** behind a reverse proxy, `trustProxy` must be set to the proxy's address, or all users
+   share one address for throttling.
+3. No breached-password check (offline list only); no general rate limit yet; audit trail not yet shipped off the
+   server.
 
 ## Owner actions
 
-1. ~~Approve the push (O-01)~~ — done 2026-10-27.
-2. **Publish the baseline tag** (O-02). On your PC, in the repository folder, with the original
-   `WAM_Phase1A_closure.bundle` (changes your local Git and adds one tag on GitHub; touches nothing else):
+1. **Approve the push (O-10)** of the commits above to the session branch. A Git bundle is provided as a backup.
+2. **Decide MFA scope (O-07):** owner and administrators only, or all staff?
+3. **Publish the baseline tag (O-02).** On your PC, in the repository folder, with `WAM_Phase1A_closure.bundle`
+   (changes your local Git and adds one tag on GitHub; nothing else):
    ```
    git fetch "PATH\TO\WAM_Phase1A_closure.bundle" refs/tags/desktop-baseline-efbd65a:refs/tags/desktop-baseline-efbd65a
    git rev-parse "desktop-baseline-efbd65a^{commit}"     # must print efbd65a9ca123c1ac03d464087628097671a0290
@@ -60,6 +79,6 @@ Phase 1B-2 onward; any desktop change; anything on Windows; PostgreSQL 17 testin
    git ls-remote origin refs/tags/desktop-baseline-efbd65a   # must print 6dd8a5dd58b3d43e78abdfe2113128b9947bf6b5
    ```
    Then in GitHub → Settings → Rules, protect `main` (require a pull request) and protect tags `desktop-baseline-*`.
-3. **Tell staff:** in the desktop import screen, choose *skip* — never *update* — for duplicates, until O-03 is fixed.
-4. **Answer D-01 and D-05** (and, when you can, D-02, D-03, D-06), and run the WSL2 readiness checks in the
-   readiness sheet, T-5 (read-only).
+4. **Tell staff:** in the desktop import screen choose *skip*, never *update*, for duplicates, until O-03 is fixed.
+5. When you can: D-02 (warehouse list, privately), D-03 (mapping source and reviewer), D-06 (approvals), and the
+   WSL2 readiness checks in the readiness sheet, T-5 (read-only).

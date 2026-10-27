@@ -38,6 +38,7 @@ npm run verify                 # typecheck + lint + all tests + build; must end 
 | `npm run lint` | ESLint with type-aware rules (incl. `no-floating-promises`) | nothing |
 | `npm run test:unit` | tests that need no database | nothing |
 | `npm run test:integration` | tests against a **throwaway** PostgreSQL cluster | a temporary directory under the OS temp folder, deleted afterwards |
+| `npm run test:perf` | performance measurement (see below) | as above |
 | `npm test` | both of the above | as above |
 | `npm run build` | compiles `src/` to `dist/` | `dist/` (git-ignored) |
 | `npm run db:migrate -- <command>` | migration CLI (after `build`) — see below | **the database in `WAM_MIGRATION_DATABASE_URL`** |
@@ -132,15 +133,40 @@ It will not listen if its database role: is a superuser; has `BYPASSRLS`, `CREAT
 objects in `public`; or if PostgreSQL is older than 16, migrations are pending, or the database has
 migrations this code does not know. Each case has a test.
 
-## HTTP conventions (apply to every future endpoint)
+## HTTP conventions (apply to every endpoint)
 
-- `GET /health/live` → `200 {"status":"ok"}`; `GET /health/ready` → `200` or `503 {"status":"unavailable"}`
-  (database check). Neither reveals versions, hostnames or error text.
-- Errors always look like `{"error":{"code":"NOT_FOUND","message":"Not found","requestId":"…"}}`. The message
-  is generic; the details are logged server-side under the same `requestId`, which is also returned in the
-  `X-Request-Id` header. A client-supplied `X-Request-Id` is ignored.
-- Every response carries `Cache-Control: no-store` and `X-Content-Type-Options: nosniff`.
-- Responses declare a JSON schema so only listed fields are ever serialized.
+- Every route declares who may call it (`config.access`: public, authenticated, owner, a system permission, or a
+  warehouse permission for the warehouse in the URL). A route without one stops the server from starting.
+- Requests that are not `GET`/`HEAD`/`OPTIONS` must send `X-WAM-CSRF: 1` and an `Origin` equal to
+  `WAM_PUBLIC_ORIGIN`; otherwise `403`.
+- Changes in the admin API need an `Idempotency-Key: <uuid>` header (one per user action, reused for that action's
+  retries) and, for edits, the `version` the edit is based on (`409 VERSION_CONFLICT` if someone else changed it).
+- `GET /health/live` → `200 {"status":"ok"}`; `GET /health/ready` → `200` or `503 {"status":"unavailable"}`.
+- Errors always look like `{"error":{"code":"NOT_FOUND","message":"Not found","requestId":"…"}}`, with `details`
+  only for information meant for the caller. A warehouse the caller may not see answers exactly like one that does
+  not exist.
+- Every response: `Cache-Control: no-store`, `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`,
+  `Content-Security-Policy: default-src 'none'; frame-ancestors 'none'`; over https also HSTS.
+- Responses declare JSON schemas, so only listed fields are ever serialized; request bodies reject unknown fields.
+
+## API (Phase 1B-2)
+
+| Area | Endpoints |
+|---|---|
+| Sign-in | `POST /api/auth/login`, `/logout`, `/change-password`, `/setup-password` |
+| Own account | `GET /api/me`, `GET /api/me/sessions`, `POST /api/me/sessions/end-others` |
+| Users | `GET /api/admin/users`, `GET/PATCH /api/admin/users/:id`, `POST /api/admin/users`, `PUT /api/admin/users/:id/access`, `POST /api/admin/users/:id/setup-code`, `POST /api/admin/users/:id/end-sessions` |
+| Access catalogue | `GET /api/admin/permissions`, `GET/POST /api/admin/profiles`, `PATCH/DELETE /api/admin/profiles/:id`, `GET/POST /api/admin/job-titles`, `PATCH /api/admin/job-titles/:id` |
+| Warehouses | `GET/POST /api/admin/warehouses`, `PATCH /api/admin/warehouses/:id` |
+| Audit | `GET /api/admin/audit-events` (everything), `GET /api/warehouses/:warehouseId/audit-events` (one warehouse) |
+
+Rules, outcomes and limitations: [`../docs/security/identity-and-access.md`](../docs/security/identity-and-access.md).
+
+## Performance check
+
+`npm run test:perf` (not part of `verify`; about 15 seconds in the sandbox) seeds a synthetic volume — 2,000 users, 50 warehouses,
+5,000 sessions, 200,000 audit events — measures login and authenticated reads over real HTTP, and checks with
+`EXPLAIN` that the per-request queries use indexes. Targets and results: `docs/STATUS.md`.
 
 ## Pinned versions (exact; verified on the npm registry, each at least 7 days old when adopted)
 

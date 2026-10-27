@@ -1,6 +1,7 @@
 # Identity, access and online-only operation — specification
 
-Status: **authoritative design** for Phase 1B-2 (2026-10-27). Code must match this document; a change to either
+Status: **authoritative design** for Phase 1B-2 (2026-10-27); **implemented** in commits `b7632d3` and `fd0a5dc`
+(server/), verified as recorded in [`../STATUS.md`](../STATUS.md). Code must match this document; a change to either
 needs the other updated in the same commit. Requirement IDs refer to **OWASP ASVS 5.0.0** (verified as the latest
 stable release from the OWASP/ASVS repository, `v5.0.0` tag; CSV SHA-256 `98c8fe91…df680`).
 
@@ -145,6 +146,10 @@ Every request that is not `GET`/`HEAD`/`OPTIONS` — including login — must:
 
 Otherwise: `403 FORBIDDEN`, audited. State never changes on `GET`. `SameSite=Strict` is a further layer.
 
+Every response also carries `Cache-Control: no-store`, `X-Content-Type-Options: nosniff`, `Referrer-Policy:
+no-referrer` and, for the JSON API, `Content-Security-Policy: default-src 'none'; frame-ancestors 'none'`; over
+https also `Strict-Transport-Security`. Logout adds `Clear-Site-Data`.
+
 ## 6. Online-only operation (decision D-05, settled)
 
 The web application works **online only**. All authoritative reads and writes go through the central server and
@@ -163,7 +168,7 @@ objectives (decision O-08) define how long that may last.
 | Guarantee | How |
 |---|---|
 | A change is either saved completely or not at all | One database transaction per operation, including its audit record (ASVS V2.3.3) |
-| A retried change never runs twice | Every state-changing admin request carries an `Idempotency-Key` (UUID) header. The key, a fingerprint of the request and the result are stored **in the same transaction** as the change. A retry with the same key returns the original result (`Idempotency-Replayed: true`); the same key with a different request returns `422 IDEMPOTENCY_KEY_REUSED`; concurrent duplicates wait for the first and then replay it. If the change fails, nothing is stored, so a retry runs it once. Keys are kept 24 hours, per user. Exception: responses that contain a secret (a setup code) are never stored; issuing a code is safe to repeat because each issue replaces the previous code. |
+| A retried change never runs twice | Every state-changing admin request carries an `Idempotency-Key` (UUID) header. The key, a fingerprint of the request and the result are stored **in the same transaction** as the change. A retry with the same key returns the original result (`Idempotency-Replayed: true`); the same key with a different request returns `422 IDEMPOTENCY_KEY_REUSED`; concurrent duplicates wait for the first and then replay it. If the change fails, nothing is stored, so a retry runs it once. Keys are kept 24 hours, per user. Exceptions, both safe to repeat by nature: issuing a setup code (its response is a secret and is never stored; each issue replaces the previous code) and ending a user's sessions. |
 | Two people cannot silently overwrite each other | Editable records carry a `version`; an edit must name the version it was based on, otherwise `409 VERSION_CONFLICT` |
 | Duplicates are impossible at the data level | Database unique constraints (usernames, warehouse codes, profile and job-title names) |
 | Clear outcome | Every response is either a success body or the standard error body; a client that receives neither must treat the change as **not confirmed** |
@@ -191,3 +196,15 @@ check failed.
 
 Who can read it: `audit.view_all` sees everything; `audit.view` in a warehouse sees that warehouse's events only.
 Shipping the audit trail to a separate system (V16.4.3) is a Phase 1D/1E task.
+
+## 8. Known limitations and deployment blockers (2026-10-27)
+
+| # | Limitation | Consequence | Resolution |
+|---|---|---|---|
+| L-1 | **No multi-factor authentication yet** (ASVS V6.3.3, Level 2) | Passwords are the only factor | Slice 1B-2c (decision O-07). **Do not expose the server beyond a trusted network before it exists.** |
+| L-2 | **`trustProxy` is off** | Behind a reverse proxy every client would appear as the proxy's address: the per-address throttle would then affect all users together | Configure the proxy's address before deployment (Phase 1E). **Deployment blocker.** |
+| L-3 | No breached-password check (V6.2.12) | Only the bundled common-password list protects | Accepted for now: online breach services are unreliable from the deployment network |
+| L-4 | No general rate limit (V2.4.1) | A flood of refused requests also fills the audit trail | Proxy rate limits (1E); application limits with the asset APIs |
+| L-5 | The setup-code endpoint answers an unknown username slightly faster than a known one | Username probing, limited to 20 attempts per address per 15 minutes | Accepted; revisit with MFA (1B-2c) |
+| L-6 | Two non-owner administrators could grant each other warehouse access | Collusion, visible in the audit trail | Accepted (§2.3); the owner can keep `user.manage` to themselves |
+| L-7 | Audit trail kept only in the application database (V16.4.3) | A database-level compromise could alter history | Ship to a separate store in Phase 1D/1E |
