@@ -63,8 +63,10 @@ owner CLI with the separately held migration credentials (decision O-09); Argon2
 `crypto.argon2` (present in Node 24.22.1, absent in Node 22 [V]); 15-character minimum and an offline
 common-password list; one-time setup codes instead of administrator-chosen passwords; hashed reference-token
 sessions in a `__Host-` cookie with idle and absolute timeouts; a required anti-forgery header plus `Origin` checks;
-throttling that cannot permanently lock an account. **MFA is required for ASVS Level 2 (V6.3.3)** and is the next
-slice after the core (decision O-07). Desktop password hashes are **not** migrated: web accounts are issued fresh.
+throttling that cannot permanently lock an account. **MFA** (ASVS Level 2, V6.3.3; decision O-07): authenticator-app
+codes (TOTP) and recovery codes, mandatory for the owner and administrators and enforced on every request, with a
+security policy that extends it to all staff (slice 1B-2c; identity-and-access §3.2, including recovery and lockout
+safeguards). Desktop password hashes are **not** migrated: web accounts are issued fresh.
 
 ### 2.5 Authorization and warehouse isolation [specified 2026-10-27; implemented from 1B-2]
 The owner configures access in the admin panel (decision O-09): code-defined **permissions**, owner-configurable
