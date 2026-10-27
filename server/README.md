@@ -1,9 +1,10 @@
 # server/ — WAM web server
 
-**Status: Phase 1B-1 (foundation only).** Configuration, a Fastify HTTP server with health endpoints, a
-PostgreSQL connection, an explicit migration CLI with an empty baseline, startup safety checks, and an
-automated test harness. There are **no** application features yet: no users, login, warehouses, assets,
-imports or business tables. Those are Phase 1B-2 onward and need separate approval.
+**Status: Phase 1B-2 (identity and access) in progress.** On top of the Phase 1B-1 foundation (configuration,
+health endpoints, PostgreSQL, migrations, startup safety checks, test harness), the server now has users, sessions,
+configurable permission profiles, warehouses, the owner CLI and an append-only audit trail. The binding rules are in
+[`../docs/security/identity-and-access.md`](../docs/security/identity-and-access.md). There are still **no** asset,
+import or reporting features; those are Phase 1B-3 onward.
 
 Nothing here is used by, or can affect, the Electron desktop app:
 
@@ -40,6 +41,7 @@ npm run verify                 # typecheck + lint + all tests + build; must end 
 | `npm test` | both of the above | as above |
 | `npm run build` | compiles `src/` to `dist/` | `dist/` (git-ignored) |
 | `npm run db:migrate -- <command>` | migration CLI (after `build`) — see below | **the database in `WAM_MIGRATION_DATABASE_URL`** |
+| `npm run owner -- <command>` | owner CLI (after `build`) — see below | **the database in `WAM_MIGRATION_DATABASE_URL`** |
 | `npm start` | runs the server (after `build`) | the database in `WAM_DATABASE_URL` (read-only in 1B-1) |
 
 ## How the tests are kept away from real data
@@ -61,6 +63,9 @@ value stops the process with a list of every problem (never echoing the value).
 | `WAM_ENV` | yes | — | `development`, `test` or `production`. No default, so production can never silently run with development settings. |
 | `WAM_DATABASE_URL` | yes (server) | — | `postgresql://wam_app:PASSWORD@HOST:PORT/wam`. Must be the **wam_app** role. |
 | `WAM_MIGRATION_DATABASE_URL` | yes (migrations) | — | Same database, **wam_owner** role. Never give this to the server. |
+| `WAM_PUBLIC_ORIGIN` | yes (server) | — | The address users open, e.g. `https://wam.example` (origin only, no path). State-changing requests must come from it. **Must be `https://` when `WAM_ENV=production`**; `http://` (development and tests only) switches the session cookie to its non-`Secure` development form. |
+| `WAM_SESSION_IDLE_MINUTES` | no | `30` | Sign-out after this much inactivity (5–240). |
+| `WAM_SESSION_ABSOLUTE_HOURS` | no | `12` | Sign-out after this long regardless of activity (1–24). |
 | `WAM_HTTP_HOST` | no | `127.0.0.1` | Loopback: in production the server sits behind a reverse proxy on the same machine. |
 | `WAM_HTTP_PORT` | no | `3000` | |
 | `WAM_DB_POOL_MAX` | no | `10` | Connections per server process (1–100). |
@@ -101,6 +106,24 @@ npm run db:migrate -- down --apply    # reverts the latest migration; refused wh
 - **Production recovery is a forward migration or a restore from backup, never `down`**, because reverting
   can destroy data written after the migration. Take and verify a backup before every production migration
   (the backup/restore procedure is a Phase 1D deliverable).
+
+## Owner account (`npm run owner`)
+
+The owner account is created and recovered **only** here, with the migration credentials (the web server's own
+database role cannot write ownership at all). Every command is audited, including the operating-system user who ran it.
+
+```
+npm run build
+export WAM_ENV=production WAM_MIGRATION_DATABASE_URL='postgresql://wam_owner:…@…/wam'
+npm run owner -- status                                              # read-only
+npm run owner -- bootstrap --username <name> --display-name "<name>"   # once; prints a one-time setup code
+npm run owner -- recover --yes             # owner locked out: new setup code, owner signed out, throttling lifted
+npm run owner -- transfer --to <username> --yes                     # ownership moves to another active user
+npm run owner -- end-all-sessions --yes                             # incident response: everyone signs in again
+```
+
+A setup code is shown once, works once, and expires after 24 hours. Hand it over in person or by phone, never by
+e-mail or chat. The owner then chooses a password on the sign-in page ("Set password with a setup code").
 
 ## What the server refuses at startup (`src/db/safety.ts`)
 

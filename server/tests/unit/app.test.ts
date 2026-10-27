@@ -8,6 +8,9 @@ import { createDatabase, createPool, type Database } from '../../src/db/connecti
 // exist, so any query fails immediately — which is exactly what the
 // readiness test needs, and proves the other routes never touch it.
 const UNREACHABLE = 'postgresql://nobody:nothing@%2Fnonexistent%2Fwam-socket:5432/none'
+const ORIGIN = 'http://127.0.0.1:3000'
+/** What a same-origin browser request from the WAM UI carries. */
+const SAME_ORIGIN = { origin: ORIGIN, 'x-wam-csrf': '1' }
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
 
 let app: FastifyInstance
@@ -15,12 +18,13 @@ let db: Kysely<Database>
 
 beforeEach(async () => {
   db = createDatabase(createPool({ connectionString: UNREACHABLE, poolMax: 1, statementTimeoutMs: 1_000 }, () => undefined))
-  app = buildApp({ db, logger: false, readinessTimeoutMs: 1_000 })
+  app = buildApp({ db, logger: false, readinessTimeoutMs: 1_000, publicOrigin: ORIGIN, sessions: { idleMinutes: 30, absoluteHours: 12 } })
   // Test-only routes, registered before the app is ready, to exercise error handling.
-  app.get('/test/boom', () => {
+  const config = { access: { kind: 'public' } } as const
+  app.get('/test/boom', { config }, () => {
     throw new Error('connection to 10.0.0.5 failed for user "secret_admin"')
   })
-  app.post('/test/echo', { schema: { body: { type: 'object', required: ['name'], properties: { name: { type: 'string' } } } } }, (request) => request.body)
+  app.post('/test/echo', { config, schema: { body: { type: 'object', required: ['name'], properties: { name: { type: 'string' } } } } }, (request) => request.body)
   await app.ready()
 })
 
@@ -70,7 +74,7 @@ describe('error responses', () => {
   })
 
   it('reports schema validation failures generically', async () => {
-    const res = await app.inject({ method: 'POST', url: '/test/echo', payload: { other: 1 } })
+    const res = await app.inject({ method: 'POST', url: '/test/echo', headers: SAME_ORIGIN, payload: { other: 1 } })
     expect(res.statusCode).toBe(400)
     expect(res.json()).toMatchObject({ error: { code: 'VALIDATION_FAILED', message: 'Request validation failed' } })
   })
@@ -79,7 +83,7 @@ describe('error responses', () => {
     const res = await app.inject({
       method: 'POST',
       url: '/test/echo',
-      headers: { 'content-type': 'application/json' },
+      headers: { ...SAME_ORIGIN, 'content-type': 'application/json' },
       payload: '{"name": '
     })
     expect(res.statusCode).toBe(400)
@@ -87,8 +91,51 @@ describe('error responses', () => {
   })
 
   it('reports an unsupported content type with its own code', async () => {
-    const res = await app.inject({ method: 'POST', url: '/test/echo', headers: { 'content-type': 'application/x-unknown' }, payload: 'x' })
+    const res = await app.inject({
+      method: 'POST',
+      url: '/test/echo',
+      headers: { ...SAME_ORIGIN, 'content-type': 'application/x-unknown' },
+      payload: 'x'
+    })
     expect(res.statusCode).toBe(415)
     expect(res.json()).toMatchObject({ error: { code: 'UNSUPPORTED_MEDIA_TYPE' } })
+  })
+})
+
+describe('request forgery protection (state-changing requests)', () => {
+  it('accepts a same-origin request carrying the custom header', async () => {
+    const res = await app.inject({ method: 'POST', url: '/test/echo', headers: { ...SAME_ORIGIN, 'sec-fetch-site': 'same-origin' }, payload: { name: 'x' } })
+    expect(res.statusCode).toBe(200)
+  })
+
+  it.each([
+    ['without the X-WAM-CSRF header', { origin: ORIGIN }],
+    ['with a wrong X-WAM-CSRF value', { origin: ORIGIN, 'x-wam-csrf': 'yes' }],
+    ['without an Origin header', { 'x-wam-csrf': '1' }],
+    ['from a foreign origin', { origin: 'https://evil.example', 'x-wam-csrf': '1' }],
+    ['from a look-alike origin', { origin: 'http://127.0.0.1:3000.evil.example', 'x-wam-csrf': '1' }],
+    ['marked cross-site by the browser', { ...SAME_ORIGIN, 'sec-fetch-site': 'cross-site' }],
+    ['marked same-site (another subdomain) by the browser', { ...SAME_ORIGIN, 'sec-fetch-site': 'same-site' }]
+  ])('refuses a POST %s with 403, before the handler runs', async (_label, headers) => {
+    const res = await app.inject({ method: 'POST', url: '/test/echo', headers, payload: { name: 'x' } })
+    expect(res.statusCode).toBe(403)
+    expect(res.json()).toMatchObject({ error: { code: 'FORBIDDEN' } })
+  })
+
+  it('also guards routes that do not exist (no information about which do)', async () => {
+    const res = await app.inject({ method: 'DELETE', url: '/api/anything', headers: { origin: 'https://evil.example' } })
+    expect(res.statusCode).toBe(403)
+  })
+
+  it('does not apply to GET', async () => {
+    const res = await app.inject({ method: 'GET', url: '/health/live', headers: { origin: 'https://evil.example' } })
+    expect(res.statusCode).toBe(200)
+  })
+})
+
+describe('route access declarations', () => {
+  it('refuse to register a route that does not declare who may call it', () => {
+    const fresh = buildApp({ db, logger: false, publicOrigin: ORIGIN, sessions: { idleMinutes: 30, absoluteHours: 12 } })
+    expect(() => fresh.get('/test/undeclared', () => 'x')).toThrow(/no access declaration/)
   })
 })

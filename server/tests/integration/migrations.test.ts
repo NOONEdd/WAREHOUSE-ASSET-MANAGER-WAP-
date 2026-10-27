@@ -132,14 +132,14 @@ describe('migrator guarantees (PostgreSQL)', () => {
     withDatabase(async (_tdb, owner) => {
       const set: Record<string, Migration> = {
         ...migrations,
-        '0002_creates_a_table': { up: async (db) => sql`CREATE TABLE wam.rollback_probe (id int)`.execute(db).then(() => undefined) },
-        '0003_fails': {
+        '9998_creates_a_table': { up: async (db) => sql`CREATE TABLE wam.rollback_probe (id int)`.execute(db).then(() => undefined) },
+        '9999_fails': {
           up: () => Promise.reject(new Error('deliberate failure'))
         }
       }
       const { error } = await createMigrator(owner, set).migrateToLatest()
       expect(error).toBeInstanceOf(Error)
-      expect(await readMigrationState(owner, set)).toEqual({ applied: [], pending: Object.keys(set), unknown: [] })
+      expect(await readMigrationState(owner, set)).toEqual({ applied: [], pending: Object.keys(set).sort(), unknown: [] })
       const { rows } = await sql<{ t: string | null }>`SELECT to_regclass('wam.rollback_probe')::text AS t`.execute(owner)
       expect(rows[0]?.t).toBeNull()
     }))

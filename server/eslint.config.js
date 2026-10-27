@@ -17,7 +17,9 @@ export default defineConfig(
       '@typescript-eslint/no-floating-promises': 'error',
       '@typescript-eslint/no-misused-promises': 'error',
       '@typescript-eslint/await-thenable': 'error',
-      '@typescript-eslint/switch-exhaustiveness-check': 'error'
+      '@typescript-eslint/switch-exhaustiveness-check': 'error',
+      // A leading underscore marks a deliberately unused binding.
+      '@typescript-eslint/no-unused-vars': ['error', { varsIgnorePattern: '^_', argsIgnorePattern: '^_' }]
     }
   },
   { files: ['eslint.config.js'], extends: [tseslint.configs.disableTypeChecked] }

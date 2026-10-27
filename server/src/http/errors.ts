@@ -1,13 +1,20 @@
 import type { FastifyError, FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
+import { AppError } from '../appError.js'
 
 // One error shape for every failed request:
 //   { "error": { "code": "NOT_FOUND", "message": "Not found", "requestId": "…" } }
-// The message is always a fixed, generic text chosen here — never the
+// The message is always a fixed text — for expected failures the one defined
+// with the AppError code, otherwise a generic text chosen here — never an
 // internal error message, which can contain SQL, file paths or data. The
 // full error is logged server-side under the same requestId.
 
 export interface ErrorBody {
-  readonly error: { readonly code: string; readonly message: string; readonly requestId: string }
+  readonly error: {
+    readonly code: string
+    readonly message: string
+    readonly requestId: string
+    readonly details?: Readonly<Record<string, unknown>>
+  }
 }
 
 const CLIENT_ERRORS: Readonly<Record<number, readonly [code: string, message: string]>> = {
@@ -23,12 +30,21 @@ const CLIENT_ERRORS: Readonly<Record<number, readonly [code: string, message: st
   429: ['TOO_MANY_REQUESTS', 'Too many requests']
 }
 
-export function errorBody(code: string, message: string, requestId: string): ErrorBody {
-  return { error: { code, message, requestId } }
+export function errorBody(
+  code: string,
+  message: string,
+  requestId: string,
+  details?: Readonly<Record<string, unknown>>
+): ErrorBody {
+  return { error: details === undefined ? { code, message, requestId } : { code, message, requestId, details } }
 }
 
 export function registerErrorHandling(app: FastifyInstance): void {
   app.setErrorHandler((error: FastifyError, request: FastifyRequest, reply: FastifyReply) => {
+    if (error instanceof AppError) {
+      request.log.info({ code: error.code }, 'request rejected')
+      return reply.status(error.status).send(errorBody(error.code, error.message, request.id, error.details))
+    }
     const status = typeof error.statusCode === 'number' && error.statusCode >= 400 && error.statusCode < 600 ? error.statusCode : 500
     if (status >= 500) {
       request.log.error({ err: error }, 'request failed')

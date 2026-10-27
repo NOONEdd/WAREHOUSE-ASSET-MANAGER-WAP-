@@ -22,9 +22,10 @@ export interface HealthOptions {
 }
 
 export function registerHealthRoutes(app: FastifyInstance, options: HealthOptions): void {
-  app.get('/health/live', { schema: { response: { 200: statusSchema } } }, () => ({ status: 'ok' }))
+  const config = { access: { kind: 'public' } } as const
+  app.get('/health/live', { config, schema: { response: { 200: statusSchema } } }, () => ({ status: 'ok' }))
 
-  app.get('/health/ready', { schema: { response: { 200: statusSchema, 503: statusSchema } } }, async (request, reply) => {
+  app.get('/health/ready', { config, schema: { response: { 200: statusSchema, 503: statusSchema } } }, async (request, reply) => {
     try {
       await withTimeout(sql`SELECT 1`.execute(options.db), options.readinessTimeoutMs)
       return { status: 'ok' }

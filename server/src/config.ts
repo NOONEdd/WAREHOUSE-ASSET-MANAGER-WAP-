@@ -16,10 +16,23 @@ export interface DatabaseConfig {
   readonly statementTimeoutMs: number
 }
 
+export interface SessionConfig {
+  readonly idleMinutes: number
+  readonly absoluteHours: number
+}
+
 export interface AppConfig {
   readonly environment: AppEnvironment
+  /**
+   * The origin users' browsers load the application from, e.g.
+   * https://wam.example. Requests that change state must come from it
+   * (docs/security/identity-and-access.md §5); https selects the
+   * `__Host-` secure session cookie.
+   */
+  readonly publicOrigin: string
   readonly http: { readonly host: string; readonly port: number }
   readonly database: DatabaseConfig
+  readonly sessions: SessionConfig
   readonly logLevel: LogLevel
 }
 
@@ -55,14 +68,25 @@ export function loadConfig(env: Env): AppConfig {
   const poolMax = readInteger(env, 'WAM_DB_POOL_MAX', 10, 1, 100, problems)
   const statementTimeoutMs = readInteger(env, 'WAM_DB_STATEMENT_TIMEOUT_MS', 15_000, 100, 600_000, problems)
   const logLevel = readEnum(env, 'WAM_LOG_LEVEL', LOG_LEVELS, 'info', problems)
+  const publicOrigin = readOrigin(env, 'WAM_PUBLIC_ORIGIN', environment, problems)
+  const idleMinutes = readInteger(env, 'WAM_SESSION_IDLE_MINUTES', 30, 5, 240, problems)
+  const absoluteHours = readInteger(env, 'WAM_SESSION_ABSOLUTE_HOURS', 12, 1, 24, problems)
 
-  if (environment === undefined || connectionString === undefined || logLevel === undefined || problems.length > 0) {
+  if (
+    environment === undefined ||
+    connectionString === undefined ||
+    logLevel === undefined ||
+    publicOrigin === undefined ||
+    problems.length > 0
+  ) {
     throw new ConfigError(problems)
   }
   return {
     environment,
+    publicOrigin,
     http: { host, port },
     database: { connectionString, poolMax, statementTimeoutMs },
+    sessions: { idleMinutes, absoluteHours },
     logLevel
   }
 }
@@ -130,6 +154,41 @@ function readInteger(env: Env, name: string, fallback: number, min: number, max:
     return fallback
   }
   return value
+}
+
+function readOrigin(
+  env: Env,
+  name: string,
+  environment: AppEnvironment | undefined,
+  problems: string[]
+): string | undefined {
+  const raw = readString(env, name)
+  if (raw === undefined) {
+    problems.push(`${name} is required (the address users open, e.g. https://wam.example)`)
+    return undefined
+  }
+  let url: URL
+  try {
+    url = new URL(raw)
+  } catch {
+    problems.push(`${name} is not a valid URL`)
+    return undefined
+  }
+  if (url.protocol !== 'https:' && url.protocol !== 'http:') {
+    problems.push(`${name} must start with https:// or http://`)
+    return undefined
+  }
+  if (url.username !== '' || url.password !== '' || url.pathname !== '/' || url.search !== '' || url.hash !== '') {
+    problems.push(`${name} must be an origin only: scheme, host and optional port, no path`)
+    return undefined
+  }
+  // Plain http cannot carry a Secure cookie; it is allowed for local
+  // development and tests only.
+  if (url.protocol === 'http:' && environment === 'production') {
+    problems.push(`${name} must use https:// when WAM_ENV=production`)
+    return undefined
+  }
+  return url.origin
 }
 
 function readDatabaseUrl(env: Env, name: string, problems: string[]): string | undefined {

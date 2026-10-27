@@ -1,14 +1,24 @@
 import { randomUUID } from 'node:crypto'
 import Fastify, { LogController, type FastifyInstance, type FastifyServerOptions } from 'fastify'
 import type { Kysely } from 'kysely'
+import { MAX_SESSIONS_PER_USER, type SessionSettings } from './auth/sessions.js'
+import type { SessionConfig } from './config.js'
 import type { Database } from './db/connection.js'
+import { registerAuthorization } from './http/authorization.js'
+import { cookieSettingsFor } from './http/cookies.js'
 import { registerErrorHandling } from './http/errors.js'
+import { registerForgeryProtection } from './http/forgery.js'
 import { registerHealthRoutes } from './http/health.js'
+import { registerAuthRoutes } from './http/routes/authRoutes.js'
+import { registerMeRoutes } from './http/routes/meRoutes.js'
 
 export interface AppOptions {
   readonly db: Kysely<Database>
   /** `false` disables logging (tests); otherwise pino options. */
   readonly logger: NonNullable<FastifyServerOptions['logger']>
+  /** See AppConfig.publicOrigin. */
+  readonly publicOrigin: string
+  readonly sessions: SessionConfig
   readonly readinessTimeoutMs?: number
 }
 
@@ -27,20 +37,33 @@ export function buildApp(options: AppOptions): FastifyInstance {
     requestIdHeader: false,
     logController: new LogController({ requestIdLogLabel: 'requestId' }),
     // Not behind a proxy yet. When nginx is added (Phase 1E) this must be
-    // set to the proxy's address, never `true`.
-    trustProxy: false
+    // set to the proxy's address, never `true` (ASVS 5.0.0 V15.3.4).
+    trustProxy: false,
+    // API bodies are small JSON documents; file uploads get their own limits.
+    bodyLimit: 64 * 1024,
+    // Reject fields a schema does not list instead of silently dropping
+    // them (Fastify's default), so mass assignment fails loudly (V15.3.3).
+    ajv: { customOptions: { removeAdditional: false } }
   })
 
   app.addHook('onRequest', (request, reply, done) => {
     reply.header('x-request-id', request.id)
-    // API responses are per-user data from Phase 1B-2 on; never let a
-    // browser or proxy cache them.
+    // API responses are per-user data; never let a browser or proxy cache them.
     reply.header('cache-control', 'no-store')
     reply.header('x-content-type-options', 'nosniff')
     done()
   })
 
+  const sessions: SessionSettings = { ...options.sessions, maxPerUser: MAX_SESSIONS_PER_USER }
+  const cookie = cookieSettingsFor(options.publicOrigin)
+
   registerErrorHandling(app)
+  registerForgeryProtection(app, { db: options.db, publicOrigin: options.publicOrigin })
+  // Before any route: it rejects routes without an access declaration.
+  registerAuthorization(app, { db: options.db, sessions, cookie })
+
   registerHealthRoutes(app, { db: options.db, readinessTimeoutMs: options.readinessTimeoutMs ?? 2_000 })
+  registerAuthRoutes(app, { db: options.db, sessions, cookie })
+  registerMeRoutes(app, { db: options.db, sessions })
   return app
 }

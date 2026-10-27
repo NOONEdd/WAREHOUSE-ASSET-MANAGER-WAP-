@@ -3,6 +3,7 @@ import { buildApp } from './app.js'
 import { describeDatabaseTarget, loadConfig, type Env } from './config.js'
 import { createDatabase, createPool } from './db/connection.js'
 import { assertDatabaseReadyForServer } from './db/safety.js'
+import { MAINTENANCE_INTERVAL_MS, runMaintenance } from './maintenance.js'
 
 export interface RunningServer {
   readonly app: FastifyInstance
@@ -29,6 +30,8 @@ export async function startServer(env: Env): Promise<RunningServer> {
     await assertDatabaseReadyForServer(db)
     app = buildApp({
       db,
+      publicOrigin: config.publicOrigin,
+      sessions: config.sessions,
       logger: {
         level: config.logLevel,
         // Fastify's default request serializer logs no headers today; this
@@ -41,14 +44,30 @@ export async function startServer(env: Env): Promise<RunningServer> {
     })
     const url = await app.listen({ host: config.http.host, port: config.http.port })
     app.log.info(
-      { environment: config.environment, database: describeDatabaseTarget(config.database.connectionString) },
+      {
+        environment: config.environment,
+        publicOrigin: config.publicOrigin,
+        database: describeDatabaseTarget(config.database.connectionString)
+      },
       'server started'
     )
     const running = app
+    const maintenance = setInterval(() => {
+      runMaintenance(db).then(
+        (result) => {
+          running.log.info({ removed: result }, 'maintenance completed')
+        },
+        (err: unknown) => {
+          running.log.error({ err }, 'maintenance failed')
+        }
+      )
+    }, MAINTENANCE_INTERVAL_MS)
+    maintenance.unref()
     return {
       app: running,
       url,
       close: async () => {
+        clearInterval(maintenance)
         await running.close()
         await db.destroy()
       }

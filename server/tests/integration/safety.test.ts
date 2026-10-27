@@ -3,6 +3,7 @@ import { sql, type Kysely } from 'kysely'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import type { Database } from '../../src/db/connection.js'
 import { createMigrator } from '../../src/db/migrator.js'
+import { migrations } from '../../src/db/migrations/index.js'
 import { assertDatabaseReadyForServer, DatabaseNotReadyError } from '../../src/db/safety.js'
 import { connectionUrl } from '../support/ephemeralPostgres.js'
 import { clusterInfo, connect, createTestDatabase, type TestDatabase } from '../support/testDatabase.js'
@@ -42,7 +43,7 @@ async function readinessProblems(url: string): Promise<readonly string[]> {
 describe('before migrations are applied', () => {
   it('refuses to start: the schema is missing migrations', async () => {
     expect(await readinessProblems(tdb.urls.app)).toEqual([
-      'the database is missing migration(s) 0001_baseline; run "npm run db:migrate -- up --apply" as wam_owner'
+      `the database is missing migration(s) ${Object.keys(migrations).join(', ')}; run "npm run db:migrate -- up --apply" as wam_owner`
     ])
   })
 })

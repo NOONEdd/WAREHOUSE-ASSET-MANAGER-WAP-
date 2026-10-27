@@ -2,7 +2,7 @@
   "name": "wam-server",
   "version": "0.0.0",
   "private": true,
-  "description": "WAM web server (Phase 1B-1: configuration, Fastify health endpoints, PostgreSQL connection, migrations, test harness; no application features yet).",
+  "description": "WAM web server (Phase 1B-2: identity, configurable access, sessions, audit; no asset features yet).",
   "type": "module",
   "license": "UNLICENSED",
   "engines": {
@@ -12,6 +12,7 @@
     "build": "tsc -p tsconfig.build.json",
     "start": "node dist/main.js",
     "db:migrate": "node dist/cli/migrate-main.js",
+    "owner": "node dist/cli/owner-main.js",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
     "test": "vitest run",

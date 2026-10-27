@@ -43,7 +43,14 @@ export function connect(url: string): Kysely<Database> {
 }
 
 export function serverEnv(url: string, overrides: Env = {}): Env {
-  return { WAM_ENV: 'test', WAM_DATABASE_URL: url, WAM_HTTP_PORT: '0', WAM_LOG_LEVEL: 'silent', ...overrides }
+  return {
+    WAM_ENV: 'test',
+    WAM_DATABASE_URL: url,
+    WAM_PUBLIC_ORIGIN: 'http://127.0.0.1:3000',
+    WAM_HTTP_PORT: '0',
+    WAM_LOG_LEVEL: 'silent',
+    ...overrides
+  }
 }
 
 export function migrationEnv(url: string, overrides: Env = {}): Env {
