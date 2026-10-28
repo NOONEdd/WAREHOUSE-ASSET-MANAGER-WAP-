@@ -21,8 +21,8 @@ remote branch was verified at `18b4c6b`, and is still kept.
 
 | Commit | Content |
 |---|---|
-| the commit before the one containing this file | O-13 selection and artifact verification; E-18 approval: CSV fields counted as processed cells, exact and first-over boundary cases for CSV cells and the 30 s limit, cached-formula and merged-cell regression case, concurrency 1 by default / 2 at most with a 2-parallel load test and host-memory sampling; documents brought into line |
-| the commit containing this file | Verification results of that commit (table below) |
+| `416d2f9` | O-13 selection and artifact verification; E-18 approval: CSV fields counted as processed cells, exact and first-over boundary cases for CSV cells and the 30 s limit, cached-formula and merged-cell regression case, concurrency 1 by default / 2 at most with a 2-parallel load test and host-memory sampling; documents brought into line |
+| the commit containing this file | Verification results of `416d2f9` (table below) |
 
 Nothing was merged into `main`, tagged, released or deployed. No desktop file and no `server/` file changed.
 
@@ -62,7 +62,14 @@ rehearsal**.
 | `node run-evaluation.mjs` (full: measure, derive, verify, streaming comparison, isolation probes, load) after the parser change | **exit 0: 90/90 cases** under the derived heap 1,280 / watchdog 1,792 / kernel 2,816 MiB |
 | `node run-evaluation.mjs --quick` under the recorded heap 1,280 / watchdog 2,048 / kernel 3,072 MiB | **exit 0: 90/90 cases**; `load()` deterministic with intact text; every isolation layer acted (incl. 29.5 s completes, 30.1 s stopped); 2 parallel worst-case parses ok in at most 11.1 s, host `MemAvailable` never below 13,245 MiB (16 GiB host). Results: [`security/import-evaluation-results.md`](security/import-evaluation-results.md) |
 | `compare-unzipper.mjs` | exit 0 on 2026-10-27 (identical output for all 8 files); the code path it tests did not change |
-| Desktop `npm run verify`, server `npm run verify`, O-06 self-test, audits on a fresh clone of the commit before this one | recorded in the next status commit |
+| Fresh clone of `416d2f9`, `npm ci --ignore-scripts` (root, `server/`, `tools/import-evaluation/`), non-root user, Node 24.22.1 | all three lockfiles unchanged |
+| Desktop `npm run verify` (env check, tests, build), private `TMPDIR` | **exit 0**: 533/533 tests in 37 files; build OK |
+| Server `npm run verify` (typecheck, ESLint `strictTypeChecked`, tests, build), PostgreSQL 16.15 | **exit 0**: 323/323 tests in 17 files |
+| O-06 self-test (`tools/data-quality/test_o06_data_quality.py`) | passed: 34 statements, no synthetic value in the report, file unchanged, 6 unsafe inputs refused |
+| `npm audit` | `server/` 0; `tools/import-evaluation/` 0 |
+| `verify_artifacts.py` on the clone's install; `npm ls --all`; `buffers` | exit 0 (88/88 SHA-512, 88/88 identical contents); `npm ls` exit 0; `buffers` not in the tree |
+| `node --check` of every evaluation script | no syntax error |
+| Scope | `18b4c6b..416d2f9` touches only `docs/` and `tools/import-evaluation/`; desktop source, build configuration, root package files and `server/` unchanged; GitHub branch still `18b4c6b` (nothing pushed) |
 
 ## Acceptance gates before any operational import (ExcelJS not approved for operational use until all pass)
 
