@@ -12,6 +12,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { corpus } from './lib/corpus.mjs'
 import { canIsolateNetwork, runIsolated } from './lib/isolate.mjs'
+import { OPERATIONAL } from './lib/limits.mjs'
 import { buildXlsx } from './lib/xlsx-build.mjs'
 
 const root = dirname(fileURLToPath(import.meta.url))
@@ -257,18 +258,50 @@ await probe('escape attempts without the network namespace (shows what it adds)'
 await probe('worker thread with resourceLimits, Buffers (not covered by the limit)', 'worker-buffers', recommended, { permission: false })
 await probe('worker thread with resourceLimits, objects (covered)', 'worker-heap', recommended, { permission: false })
 await probe('infinite loop, real 30 s wall-clock limit', 'spin', recommended)
+// The wall-clock boundary: work that needs just under 30 s completes; work that needs just over is stopped.
+await probe('work of 29.5 s, just under the 30 s limit (completes)', 'busy', recommended, { args: ['29500'] })
+await probe('work of 30.1 s, just over the 30 s limit (stopped)', 'busy', recommended, { args: ['30100'] })
 listener.close()
 results.phases.isolation = iso
 
-// ---------- 5. load: four at-limit files at once ----------
-log('5. four at-limit parses at the same time')
+// ---------- 5. load: the approved maximum of parallel parses, and a stress level above it ----------
+log(`5. parallel at-limit parses: ${String(OPERATIONAL.concurrentParsesMaximum)} (approved maximum) and 4 (stress test only)`)
+function memAvailableMiB() {
+  const m = /^MemAvailable:\s+(\d+) kB/m.exec(readFileSync('/proc/meminfo', 'utf8'))
+  return m === null ? undefined : Math.round(Number(m[1]) / 1024)
+}
 const load = []
-for (const id of ['L6', 'L1']) {
-  const c = cases.find((x) => x.id === id)
-  const buf = await input(c)
+const sets = [
+  [OPERATIONAL.concurrentParsesMaximum, ['L6', 'L6']],
+  [OPERATIONAL.concurrentParsesMaximum, ['L1', 'L1']],
+  [OPERATIONAL.concurrentParsesMaximum, ['L6', 'L1']],
+  [4, ['L6', 'L6', 'L6', 'L6']],
+  [4, ['L1', 'L1', 'L1', 'L1']]
+]
+for (const [parallel, ids] of sets) {
+  const bufs = await Promise.all(ids.map((id) => input(cases.find((x) => x.id === id))))
+  const before = memAvailableMiB()
+  let lowest = before
+  const sampler = setInterval(() => {
+    const now = memAvailableMiB()
+    if (now !== undefined && now < lowest) lowest = now
+  }, 50)
   const t0 = Date.now()
-  const runs = await Promise.all([0, 1, 2, 3].map(() => runIsolated({ mode: c.mode, input: buf, memory: recommended })))
-  const entry = { id, totalMs: Date.now() - t0, outcomes: runs.map((r) => r.outcome), wallMs: runs.map((r) => r.wallMs), peakRssMiB: runs.map((r) => r.peakRssMiB), sameDigest: new Set(runs.map((r) => r.rowsDigest)).size === 1 }
+  const runs = await Promise.all(ids.map((id, i) => runIsolated({ mode: cases.find((x) => x.id === id).mode, input: bufs[i], memory: recommended })))
+  clearInterval(sampler)
+  const digests = new Map()
+  ids.forEach((id, i) => digests.set(id, [...(digests.get(id) ?? []), runs[i].rowsDigest]))
+  const entry = {
+    parallel,
+    files: ids.join('+'),
+    totalMs: Date.now() - t0,
+    outcomes: runs.map((r) => r.outcome),
+    wallMs: runs.map((r) => r.wallMs),
+    peakRssMiB: runs.map((r) => r.peakRssMiB),
+    sameDigest: [...digests.values()].every((d) => new Set(d).size === 1),
+    memAvailableBeforeMiB: before,
+    memAvailableLowestMiB: lowest
+  }
   load.push(entry)
   log('  ', JSON.stringify(entry))
 }
@@ -280,7 +313,17 @@ const failures = verified.filter((v) => !v.pass)
 // load() never damages text and gives the same rows twice.
 const streamOk = compare.every((e) => e.loadRowsWithDamagedText === undefined || (e.loadRowsWithDamagedText === 0 && e.loadTwiceSameDigest))
 const loadOk = load.every((l) => l.outcomes.every((o) => o === 'ok') && l.wallMs.every((w) => w < 30_000) && l.sameDigest)
-const isoOk = iso[0].outcome === 'memory' && iso[1].outcome === 'memory' && iso[2].outcome === 'memory' && iso[2].reason === 'memory-watchdog' && iso[7].outcome === 'timeout'
+const probeResult = (start) => iso.find((p) => p.name.startsWith(start))
+const escaped = probeResult('escape attempts:')?.result ?? {}
+const isoOk =
+  probeResult('V8 heap exhaustion')?.outcome === 'memory' &&
+  probeResult('Buffer growth, watchdog out of the way')?.outcome === 'memory' &&
+  probeResult('Buffer growth, kernel limit out of the way')?.reason === 'memory-watchdog' &&
+  probeResult('infinite loop')?.outcome === 'timeout' &&
+  probeResult('work of 29.5 s')?.outcome === 'ok' &&
+  probeResult('work of 30.1 s')?.outcome === 'timeout' &&
+  ['write', 'read', 'spawn', 'worker'].every((k) => escaped[k] === 'ERR_ACCESS_DENIED') &&
+  (escaped.network === 'ENETUNREACH' || !results.host.networkNamespace)
 results.finished = new Date().toISOString()
 results.summary = { cases: verified.length, failures: failures.map((f) => f.id), streamOk, loadOk, isolationOk: isoOk }
 writeFileSync(join(out, 'evaluation-results.json'), `${JSON.stringify(results, null, 2)}\n`)

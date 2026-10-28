@@ -33,6 +33,14 @@ export const DERIVED = Object.freeze({
   cellFormats: 65_490
 })
 
+// Concurrency (E-18, owner decision 2026-10-28): at most two parser processes at
+// once, ever; one until combined worst-case load has been measured successfully on
+// the target host.
+export const OPERATIONAL = Object.freeze({
+  concurrentParses: 1,
+  concurrentParsesMaximum: 2
+})
+
 /** A file refused because it exceeds a ceiling; `limit` names which one. */
 export class LimitError extends Error {
   constructor(limit, detail) {

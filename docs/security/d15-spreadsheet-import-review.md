@@ -1,7 +1,8 @@
 # D-15 — Spreadsheet parsing on the web server: decision, dependency review and required controls
 
-Date: 2026-10-27. Status: **decision recorded; dependency review done; evaluated on synthetic files (O-13, E-18);
-not adopted yet.** No package has been added to `server/package.json`. Adoption happens in Phase 1B-3, after the 1B-3
+Date: 2026-10-27, updated 2026-10-28. Status: **decision recorded; dependency selected (O-13: ExcelJS with the explicit
+`unzipper@0.12.5` override, strict `csv-parse`); E-18 limits approved; evaluated on synthetic files; not approved for
+operational use.** No package has been added to `server/package.json`. Adoption happens in Phase 1B-3, after the 1B-3
 gate (STATUS), with the controls below **as corrected by the evaluation**:
 [`import-evaluation.md`](import-evaluation.md). Where this review and the evaluation differ, the evaluation is current.
 
@@ -106,9 +107,10 @@ How verified: `npm view <package> version time license dependencies`; `npm insta
 ## 5. Open items before adoption
 
 1. ~~`buffers@0.1.1` has no licence~~ — **resolved by the explicit override `unzipper@0.12.5` (O-13)**, tested for
-   compatibility; [`import-evaluation.md`](import-evaluation.md) §2. Adoption of ExcelJS itself is still your decision.
+   compatibility and verified against the published artifacts; [`import-evaluation.md`](import-evaluation.md) §2.
+   The dependency is selected (O-13, 2026-10-28); operational use waits for the acceptance gates (evaluation §7).
 2. ~~D-15 (desktop scope)~~ — **settled**: server only; desktop replacement is separate work before a new desktop
    release; interim restrictions documented.
-3. ~~Concrete limit values~~ — **set by you (E-18)** and boundary-tested; the memory limit is derived from
+3. ~~Concrete limit values~~ — **approved by you (E-18, 2026-10-28)** with concurrency 1 by default and 2 at most, and boundary-tested; the memory limit is derived from
    measurement. Re-check against the O-06 assessment (row and column counts, field lengths) and re-measure on the
    target server before import is switched on.

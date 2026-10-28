@@ -24,6 +24,14 @@ switch (mode) {
   case 'spin': {
     for (;;);
   }
+  case 'busy': {
+    // Legitimate work of a known duration, for the wall-clock boundary.
+    const ms = Number(process.argv[4])
+    const until = Date.now() + ms
+    while (Date.now() < until);
+    done({ busyMs: ms })
+    process.exit(0)
+  }
   case 'escape': {
     const fs = await import('node:fs')
     const cp = await import('node:child_process')

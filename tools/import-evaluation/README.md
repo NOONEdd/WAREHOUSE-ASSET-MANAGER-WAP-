@@ -1,7 +1,8 @@
 # Spreadsheet import evaluation (decisions D-15, O-13, E-18)
 
 **Evaluation only.** This folder tests how `.xlsx` and CSV files can be parsed safely on the web server, on
-synthetic files, before any parser is added to `server/`. It is not part of the web server or the desktop app;
+synthetic files, before any parser is added to `server/`. The dependency direction is selected (O-13, 2026-10-28)
+but **not approved for operational use**; the acceptance gates are in the evaluation document, §7. It is not part of the web server or the desktop app;
 their builds never install it. Results and the recommendation: [`docs/security/import-evaluation.md`](../../docs/security/import-evaluation.md).
 
 ## What it contains
@@ -17,6 +18,9 @@ their builds never install it. Results and the recommendation: [`docs/security/i
 | `lib/corpus.mjs`, `lib/xlsx-build.mjs`, `lib/zip-write.mjs` | The synthetic corpus and the writers that build it byte by byte |
 | `producers/make_reference.py` | Writes the reference table with openpyxl and XlsxWriter (independent producers) |
 | `run-evaluation.mjs` | Runs everything and writes `out/evaluation-results.json` and `out/evaluation-summary.md` |
+| `compare-unzipper.mjs` | O-13: ExcelJS's streaming reader with `unzipper` 0.12.5 against an install with the declared 0.10.x |
+| `verify_artifacts.py` | O-13: every installed package against its published tarball (SHA-512 and file contents), licence evidence |
+| `report.py` | Writes `docs/security/import-evaluation-results.md` and the generated blocks of the evaluation document |
 
 ## Running it (Linux; Node 24)
 
@@ -30,13 +34,16 @@ mkdir -p out/producers
 python3 -I producers/make_reference.py out/producers
 cp out/producers/reference-openpyxl.xlsx /tmp/reference-libreoffice.xlsx
 soffice --headless --convert-to xlsx:"Calc MS Excel 2007 XML" --outdir out/producers /tmp/reference-libreoffice.xlsx
-node run-evaluation.mjs            # about 10 minutes on 4 cores: measure, derive the memory limits, verify, load test
+node run-evaluation.mjs            # about 12 minutes on 4 cores: measure, derive the memory limits, verify, load test
 node run-evaluation.mjs --quick    # skip the measurement; verify with the recorded limits
+python3 -I verify_artifacts.py "$PWD" /path/to/empty/folder "$(command -v npm)"   # after every dependency change
 ```
 
 Exit code 0 means every case met its expectation, the isolation layers each acted, and the load test passed. The
-run uses about 5 GiB of memory at its peak (four parses at once) and must not share the machine with anything
-whose timing matters.
+load test runs the approved maximum of 2 parallel parses and, as a stress test only, 4; at 4 the run uses about
+5 GiB of memory, so it must not share the machine with anything whose timing matters. **On the target host** this
+run is the evidence required before concurrency 2 is enabled (evaluation document §5.2): note `MemAvailable` before
+and lowest in the results.
 
 ## How to read the corpus
 

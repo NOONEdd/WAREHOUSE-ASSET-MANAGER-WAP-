@@ -1,11 +1,13 @@
 """Turns out/evaluation-results.json into the committed results document
-(docs/security/import-evaluation-results.md), so that no number is copied by
-hand. Usage:
-    python3 -I report.py RESULTS.json OUTPUT.md [MEASUREMENT.json]
+(docs/security/import-evaluation-results.md) and fills the generated blocks
+(<!-- gen:NAME -->…<!-- /gen:NAME -->) of docs/security/import-evaluation.md, so
+that no number is copied by hand. Usage:
+    python3 -I report.py RESULTS.json OUTPUT.md [MEASUREMENT.json] [--evidence EVIDENCE.md]
 MEASUREMENT.json is a full run whose measurement phase is reported when
 RESULTS.json comes from a --quick run (verification under the recorded limits).
 """
 import json
+import re
 import sys
 
 LIMIT_NAMES = {
@@ -107,15 +109,99 @@ def main(src, dst, measured=None):
         w(f"| {cell(p['name'])} | {p['outcome']} | {cell(p.get('reason'))} | {p['wallMs']} | {p['peakRssMiB']} | {cell(json.dumps(details, ensure_ascii=False) if details else p.get('stderrHead'))} |")
 
     w("")
-    w("## Four parses at the same time")
+    w("## Parallel parses (2 = the approved maximum; 4 = stress test above it)")
     w("")
-    w("| File | Outcomes | Time per parse ms | Peak MiB per parse | Same rows in all four | Total ms |")
-    w("|---|---|---|---|---|---|")
+    w("| Parallel | Files | Outcomes | Time per parse ms | Peak MiB per parse | Same rows for the same file | Host MemAvailable before / lowest MiB |")
+    w("|---|---|---|---|---|---|---|")
     for l in r["phases"]["load"]:
-        w(f"| {l['id']} | {', '.join(l['outcomes'])} | {', '.join(map(str, l['wallMs']))} | {', '.join(map(str, l['peakRssMiB']))} | {l['sameDigest']} | {l['totalMs']} |")
+        w(f"| {l['parallel']} | {l['files']} | {', '.join(l['outcomes'])} | {', '.join(map(str, l['wallMs']))} | {', '.join(map(str, l['peakRssMiB']))} | {l['sameDigest']} | {l['memAvailableBeforeMiB']} / {l['memAvailableLowestMiB']} |")
     w("")
     open(dst, "w", encoding="utf-8").write("\n".join(out))
 
 
+BOUNDARY = [
+    ("rows 50,000", "L1", "O2"),
+    ("processed cells 1,000,000 (.xlsx)", "L1", "O4"),
+    ("worksheets 20", "L2", "O1"),
+    ("columns 100 per worksheet", "L3", "O3"),
+    ("ZIP entries 1,000", "L5", "O5"),
+    ("decompressed 100 MiB", "L11", "O6"),
+    ("compressed file 10 MiB (.xlsx)", "L8", "O7"),
+    ("CSV rows 50,000", "L4", "O8"),
+    ("CSV columns 100", "L9", "O9"),
+    ("CSV processed cells (fields) 1,000,000", "L4", "O11"),
+    ("CSV file 10 MiB", "L10", "O10"),
+]
+
+
+def evidence_blocks(r, m_run):
+    by_id = {v["id"]: v for v in r["phases"]["verify"]}
+    lim = r["limitsUsed"]
+    fails = r["summary"]["failures"]
+    n = r["summary"]["cases"]
+    iso = {p["name"]: p for p in r["phases"]["isolation"]}
+    probe = lambda start: next(p for name, p in iso.items() if name.startswith(start))
+    b = {}
+    b["cases"] = f"all {n} cases end as expected ({n - len(fails)}/{n} in the final run)" if not fails else f"**failures: {', '.join(fails)}**"
+    b["limits"] = f"V8 heap **{lim['heapMiB']:,} MiB**, resident-memory watchdog **{lim['rssMiB']:,} MiB**, kernel data limit **{lim['dataMiB']:,} MiB**"
+    t = ["", f"Verification run of {r['started'][:16].replace('T', ' ')} UTC under heap {lim['heapMiB']:,} / watchdog {lim['rssMiB']:,} / kernel {lim['dataMiB']:,} MiB.", "",
+         "| Ceiling | At the value | Result | Time | First value above | Result (message) |", "|---|---|---|---|---|---|"]
+    for label, at, over in BOUNDARY:
+        A, O = by_id[at], by_id[over]
+        t.append(f"| {label} | {at}: {cell(A['title'])} | {'accepted' if A['pass'] and A['got'] == 'ok' else '**' + A['got'] + '**'} | {A['wallMs'] / 1000:.1f} s | {over}: {cell(O['title'])} | {'refused' if O['pass'] else '**' + O['got'] + '**'} ({cell(O['detail'])}) |")
+    O12 = by_id.get("O12")
+    if O12:
+        t.append(f"| CSV blank fields | — | — | — | O12: {cell(O12['title'])} | {'refused' if O12['pass'] else '**' + O12['got'] + '**'} ({cell(O12['detail'])}) |")
+    under, over_ = probe("work of 29.5 s"), probe("work of 30.1 s")
+    spin = probe("infinite loop")
+    t.append(f"| wall clock 30 s per file | work of 29.5 s | {'completed' if under['outcome'] == 'ok' else '**' + under['outcome'] + '**'} | {under['wallMs'] / 1000:.1f} s | work of 30.1 s; endless loop | {'stopped' if over_['outcome'] == 'timeout' else '**' + over_['outcome'] + '**'} at {over_['wallMs'] / 1000:.1f} s; {'stopped' if spin['outcome'] == 'timeout' else '**' + spin['outcome'] + '**'} at {spin['wallMs'] / 1000:.1f} s |")
+    b["boundary"] = "\n".join(t) + "\n"
+    d = m_run["phases"].get("derive")
+    if d:
+        mt = ["", "| Case | File | Time | Peak resident memory | Peak VmData |", "|---|---|---|---|---|"]
+        for x in m_run["phases"]["measure"]:
+            mt.append(f"| {x['id']} | {cell(x['title'])} ({x['inputBytes']:,} bytes) | {x['wallMs'] / 1000:.1f} s | {x['peakRssMiB']:,} MiB | {x['peakVmDataMiB']:,} MiB |")
+        mt += ["", f"Full run of {m_run['started'][:16].replace('T', ' ')} UTC: smallest heap ceiling at which every at-limit file parses **{d['minHeapThatPasses']} MiB**; peak resident memory {d['peakRssMiB']:,} MiB, peak VmData {d['peakVmDataMiB']:,} MiB; derived heap {d['derived']['heapMiB']:,} / watchdog {d['derived']['rssMiB']:,} / kernel {d['derived']['dataMiB']:,} MiB (recorded: {d['recorded']['heapMiB']:,} / {d['recorded']['rssMiB']:,} / {d['recorded']['dataMiB']:,} MiB)."]
+        b["measure"] = "\n".join(mt) + "\n"
+    lt = ["", "| Parallel | Files | Outcomes | Time per parse | Peak per parse | Same rows for the same file | Host MemAvailable before / lowest |", "|---|---|---|---|---|---|---|"]
+    for l in r["phases"]["load"]:
+        lt.append(f"| {l['parallel']}{' (stress, above the approved maximum)' if l['parallel'] > 2 else ''} | {l['files']} | {', '.join(l['outcomes'])} | {min(l['wallMs']) / 1000:.1f}–{max(l['wallMs']) / 1000:.1f} s | {min(l['peakRssMiB']):,}–{max(l['peakRssMiB']):,} MiB | {l['sameDigest']} | {l['memAvailableBeforeMiB']:,} / {l['memAvailableLowestMiB']:,} MiB |")
+    b["load"] = "\n".join(lt) + "\n"
+    wh = probe("worker thread with resourceLimits, objects")
+    b["worker"] = f"but only after {wh['wallMs'] / 1000:.1f} s, when the process's resident memory had reached {wh['peakRssMiB']:,} MiB — about {round(wh['peakRssMiB'] / 64)} times the configured limit."
+    heavy = [k for k in ("L1", "L2", "L3", "L4", "L6", "L7", "X6") if k in by_id]
+    two = [w for l in r["phases"]["load"] if l["parallel"] == 2 for w in l["wallMs"]]
+    four = [w for l in r["phases"]["load"] if l["parallel"] == 4 for w in l["wallMs"]]
+    b["timing"] = f"an at-limit file takes up to {max(by_id[k]['wallMs'] for k in heavy) / 1000:.1f} s alone, up to {max(two) / 1000:.1f} s with two in parallel and up to {max(four) / 1000:.1f} s with four, against the 30 s ceiling."
+    x18 = by_id["X18"]
+    b["x18"] = f"1.5 million comments parsed in {x18['wallMs'] / 1000:.1f} s with {x18['peakRssMiB']:,} MiB (X18), within the limits."
+    wd = probe("Buffer growth, kernel limit out of the way")
+    b["watchdog"] = f"{wd['peakRssMiB'] - lim['rssMiB']} MiB past its limit was observed before the kill"
+    return b
+
+
+def fill_evidence(path, blocks):
+    s = open(path, encoding="utf-8").read()
+    for name, text in blocks.items():
+        pattern = re.compile(r"(<!-- gen:" + name + r" -->).*?(<!-- /gen:" + name + r" -->)", re.S)
+        if not pattern.search(s):
+            raise SystemExit(f"no gen:{name} block in {path}")
+        s = pattern.sub(lambda m: m.group(1) + text + m.group(2), s)
+    left = re.findall(r"<!-- gen:([a-z0-9-]+) -->\(pending\)", s)
+    if left:
+        raise SystemExit(f"blocks not filled: {left}")
+    open(path, "w", encoding="utf-8").write(s)
+
+
 if __name__ == "__main__":
-    main(sys.argv[1], sys.argv[2], sys.argv[3] if len(sys.argv) > 3 else None)
+    args = sys.argv[1:]
+    evidence = None
+    if "--evidence" in args:
+        i = args.index("--evidence")
+        evidence = args[i + 1]
+        del args[i:i + 2]
+    main(args[0], args[1], args[2] if len(args) > 2 else None)
+    if evidence:
+        results = json.load(open(args[0], encoding="utf-8"))
+        measured = json.load(open(args[2], encoding="utf-8")) if len(args) > 2 else results
+        fill_evidence(evidence, evidence_blocks(results, measured))

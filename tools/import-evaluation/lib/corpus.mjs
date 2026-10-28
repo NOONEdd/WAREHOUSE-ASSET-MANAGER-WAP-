@@ -131,6 +131,11 @@ export function corpus(root) {
   add({ id: 'O9', group: 'over-limit', title: 'CSV 101 columns', mode: 'csv', build: () => Buffer.from(`${Array.from({ length: 101 }, () => 'a').join(',')}\n`, 'utf8'), expect: ['refused'], limit: 'columnsPerSheet' })
   add({ id: 'O10', group: 'over-limit', title: 'CSV 10 MiB + 1 byte', mode: 'csv', build: () => Buffer.alloc(LIMITS.compressedBytes + 1, 0x61), expect: ['refused'], limit: 'compressedBytes' })
 
+  // Strict CSV rows all have the same number of fields, so 1,000,001 fields cannot occur within 100 columns
+  // and 50,000 rows (1,000,001 = 101 x 9,901); the first count above the ceiling is 53 x 18,868 = 1,000,004.
+  add({ id: 'O11', group: 'over-limit', title: 'CSV 1,000,004 fields (53 x 18,868), the first count above 1,000,000 a strict CSV can have', mode: 'csv', build: () => Buffer.from(Array.from({ length: 18_868 }, (_, r) => Array.from({ length: 53 }, (_, c) => `${String(r).padStart(5, '0')}${String(c).padStart(3, '0')}`).join(',')).join('\n'), 'utf8'), expect: ['refused'], limit: 'cells' })
+  add({ id: 'O12', group: 'over-limit', title: 'CSV 1,000,100 fields that are mostly blank (10,001 non-blank): blank fields are processed cells too', mode: 'csv', build: () => Buffer.from(Array.from({ length: 10_001 }, (_, r) => `v${String(r)}${','.repeat(99)}`).join('\n'), 'utf8'), expect: ['refused'], limit: 'cells' })
+
   // ---------- hostile archives ----------
   const good = () => tiny()
   add({ id: 'H1', group: 'hostile-zip', title: 'truncated archive (first half)', mode: 'xlsx-load', build: () => { const b = good(); return b.subarray(0, Math.floor(b.length / 2)) }, expect: ['refused'] })
@@ -200,6 +205,14 @@ export function corpus(root) {
   for (const [id, what, xml, extra] of wholeGrid) {
     add({ id, group: 'hostile-xml', title: `${what} over the whole grid, without the pre-check: not expanded`, mode: 'xlsx-load-unchecked', build: () => buildXlsx({ sheets: [{ name: 'S', xml }], extra }), expect: ['ok'], check: (r) => (r.wallMs < 5_000 && r.peakRssMiB < 300 ? true : `${String(r.wallMs)} ms, ${String(r.peakRssMiB)} MiB: expanded?`) })
   }
+
+  // Regression: cached formula results 0 and FALSE must survive (ExcelJS's cell.value drops them), and a merged
+  // range must be read once, at its top-left cell.
+  add({ id: 'X28', group: 'normal', title: 'cached formula results 0 and FALSE, and a merged range, read exactly', mode: 'xlsx-load', build: () => withSheetXml(`${SHEET_HEAD}<sheetData><row r="1"><c r="A1"><f>1-1</f><v>0</v></c><c r="B1" t="b"><f>FALSE()</f><v>0</v></c><c r="C1" t="b"><f>TRUE()</f><v>1</v></c></row><row r="2"><c r="A2" t="inlineStr"><is><t>merged</t></is></c><c r="B2"/><c r="C2"/></row></sheetData><mergeCells count="1"><mergeCell ref="A2:C2"/></mergeCells></worksheet>`), expect: ['ok'], check: (r) => {
+    const got = JSON.stringify(r.keptRows)
+    const want = JSON.stringify([[1, 1, [[1, 'f', 0], [2, 'f', false], [3, 'f', true]]], [1, 2, [[1, 's', 'merged']]]])
+    return got === want ? true : `rows ${got}`
+  } })
 
   // ---------- hostile CSV ----------
   add({ id: 'C1', group: 'hostile-csv', title: 'invalid UTF-8', mode: 'csv', build: () => Buffer.from([0x61, 0x2c, 0xc3, 0x28, 0x0a]), expect: ['refused'] })

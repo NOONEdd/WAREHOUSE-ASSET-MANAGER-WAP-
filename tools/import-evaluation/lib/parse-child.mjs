@@ -61,7 +61,7 @@ function text(s, stats) {
 }
 
 function newStats() {
-  return { sheets: 0, rows: 0, cells: 0, maxColumn: 0, formulas: 0, formulaLikeText: 0, overlongCells: 0, unknownTypes: 0, mergedCellsSkipped: 0 }
+  return { sheets: 0, rows: 0, cells: 0, fields: 0, maxColumn: 0, formulas: 0, formulaLikeText: 0, overlongCells: 0, unknownTypes: 0, mergedCellsSkipped: 0 }
 }
 
 // Authoritative recount of what the parser actually built.
@@ -199,6 +199,9 @@ async function parseCsv(buf) {
       number += 1
       if (record.length > limits.columnsPerSheet) throw new LimitError('columnsPerSheet', `row ${String(number)}: ${String(record.length)}`)
       if (number > limits.rows) throw new LimitError('rows', number)
+      // Every field is a processed cell, blank or not (E-18 counts processed cells).
+      stats.fields += record.length
+      if (stats.fields > limits.cells) throw new LimitError('cells', `${String(stats.fields)} fields`)
       await emitRow(1, number, record.map((v, i) => [i + 1, v === '' ? undefined : v]), stats)
     }
   })()
