@@ -112,5 +112,6 @@ How verified: `npm view <package> version time license dependencies`; `npm insta
 2. ~~D-15 (desktop scope)~~ — **settled**: server only; desktop replacement is separate work before a new desktop
    release; interim restrictions documented.
 3. ~~Concrete limit values~~ — **approved by you (E-18, 2026-10-28)** with concurrency 1 by default and 2 at most, and boundary-tested; the memory limit is derived from
-   measurement. Re-check against the O-06 assessment (row and column counts, field lengths) and re-measure on the
-   target server before import is switched on.
+   measurement. Re-check against the profile of the spreadsheet version that the Excel Source Admission Gate (O-14,
+   proposed) admits, once it admits one (row and column counts, field lengths), since the desktop database holds test
+   data only (O-06) and is no longer the reference, and re-measure on the target server before import is switched on.

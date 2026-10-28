@@ -155,7 +155,8 @@ change to them.
 **Preview and confirmation** (your E-18 conditions: row-level validation, explicit confirmation, blank cells never
 erase, transactions, idempotency, no automatic merging of duplicates) are requirements of the 1B-3 import design
 (D-15 review §4.8–4.11). They need the asset schema and cannot be built or tested before Phase 1B-3, which waits for
-O-06. What this evaluation already fixes at the parser boundary: blank cells produce **no value at all** (not an empty
+your explicit authorization (O-06 is resolved: no desktop data migration). What this evaluation already fixes at the
+parser boundary: blank cells produce **no value at all** (not an empty
 string), so nothing downstream can mistake a blank for "erase"; every value carries its type; formulas, overlong text
 and formula-like text are flagged for the preview.
 
@@ -245,9 +246,14 @@ ExcelJS stays **unapproved for operational use** until every gate below has pass
 results; if any critical compatibility, security, licensing or resource-control concern remains, the evidence and
 the alternatives (for example CSV-only import) are put to you instead.
 
+These gates cover the parser and the import endpoint. Real spreadsheet data is also subject to the Excel Source
+Admission Gate (O-14, proposed in the decision register). A preview-only test of the real spreadsheet (its stage 2)
+needs its own approval and the minimum controls of §7.1, which satisfy none of the gates below; its operational
+import (stage 3) needs its own approval and every gate below.
+
 | # | Gate | State |
 |---|---|---|
-| G-1 | O-06 owner-side assessment done and its approved aggregate report reviewed (Phase 1B-3 starts only then) | **Open** |
+| G-1 | O-06 owner-side assessment done and its approved aggregate report reviewed (Phase 1B-3 starts only then) | **Satisfied through the documented alternative, not by the original procedure** (O-06 in the decision register, 2026-10-28): you did not run the assessment on your own PC; it ran in the development sandbox on a read-only copy of the backup you supplied, at your request, and its aggregate report was presented to you; you confirmed test data only, so no desktop data is migrated. Approving the O-06 record accepts this alternative in place of the owner-side run. Phase 1B-3 itself still needs your explicit authorization |
 | G-2 | Representative workbooks **saved by Microsoft Excel** (invented data only) pass the harness with correct values — including Persian text, leading zeros, dates, formulas and merged cells | **Open** (no Excel in the sandbox; tested producers: openpyxl 3.1.5, XlsxWriter 3.2.9, LibreOffice Calc, ExcelJS 4.4.0, the corpus' own writer) |
 | G-3 | Limits re-evaluated **on the target server**: full harness run there; memory limits re-derived; timings with margin against 30 s; if the margin is thin, a lower ceiling is proposed to you, never a higher time limit | **Open** |
 | G-4 | Concurrency 2 only after the §5.2 evidence on the target host; until then 1 | **Open** (default 1) |
@@ -256,6 +262,23 @@ the alternatives (for example CSV-only import) are put to you instead.
 | G-7 | Third-party notice file with every licence text shipped with the server (§2.1) | **Open** |
 | G-8 | After the parser is integrated into `server/` (Phase 1B-3): the same corpus as automated tests there, dependency audits, `verify_artifacts.py` and the complete verification suite (desktop and server) all pass; repeated after any later parser or dependency change | **Open** |
 | G-9 | Preview with row-level validation, explicit confirmation, blank-never-erases, one transaction, idempotency, duplicates flagged and never merged — built and tested in 1B-3 | **Open** |
+
+### 7.1 Minimum controls before a preview-only test of real spreadsheet data (O-14 stage 2, proposed)
+
+A preview-only test parses a real spreadsheet, so it processes real data even though nothing is committed. Before
+you can approve one, every control below must be implemented **and** verified, with the evidence put to you. They
+are the minimum for that test only: meeting them satisfies **none** of the gates G-2…G-9 above, and operational
+import (stage 3) still needs all of those.
+
+| # | Control | Verified by |
+|---|---|---|
+| S2-1 | Prerequisites recorded: O-14 stage 1 approved for this file version; D-03 decided (deferral blocks stage 2); Phase 1B-3's staging, validation and preview pipeline built and tested on synthetic data; an agreed import field contract | The register; the 1B-3 test results |
+| S2-2 | Only the admitted file: its SHA-256 is checked before parsing, and any other file is refused | A test with a changed file |
+| S2-3 | Non-production isolation: a dedicated environment and database with no production data and no production credentials, no network path to production, reachable from a trusted network only (O-11) | Configuration review; a connection attempt to production from that environment fails |
+| S2-4 | Resource limits and confinement on the host that runs the preview: the E-18 ceilings and the pre-check; a separate parse process with kernel memory, heap, watchdog and 30 s limits, no network and no file writes; one parse at a time; the parse is refused if any layer cannot be established (fail closed). This host is not necessarily the target server, so G-3…G-5 stay open | The isolation probes of the evaluation harness, run on that host |
+| S2-5 | No operational writes and no commit: the commit step does not exist or is disabled in that environment; the preview writes only to staging and to the audit log (S2-7); its database role cannot write asset or status-history tables | Tests: a commit attempt is refused; asset and history row counts are unchanged after a preview |
+| S2-6 | Preview results handled under the stage-1 privacy rule: shown only to the people it names; no export; no copy into the repository or out of that environment | Access review |
+| S2-7 | Each preview run is audit-logged (who, when, file hash, outcome); staging data and preview results are deleted after the review, and the deletion is recorded | Audit entries; staging empty afterwards |
 
 ## 8. Remaining risks
 
