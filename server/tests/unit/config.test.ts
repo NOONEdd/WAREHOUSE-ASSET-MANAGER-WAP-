@@ -28,7 +28,8 @@ describe('loadConfig', () => {
       database: { connectionString: URL_WITH_PASSWORD, poolMax: 10, statementTimeoutMs: 15_000 },
       sessions: { idleMinutes: 30, absoluteHours: 12 },
       mfaEncryptionKey: MFA_KEY_BYTES,
-      logLevel: 'info'
+      logLevel: 'info',
+      importEnabled: false
     })
   })
 
@@ -44,9 +45,11 @@ describe('loadConfig', () => {
       WAM_HTTP_PORT: '8080',
       WAM_DB_POOL_MAX: '20',
       WAM_DB_STATEMENT_TIMEOUT_MS: '5000',
-      WAM_LOG_LEVEL: 'debug'
+      WAM_LOG_LEVEL: 'debug',
+      WAM_IMPORT_ENABLED: 'true'
     })
     expect(config.http).toEqual({ host: '0.0.0.0', port: 8080 })
+    expect(config.importEnabled).toBe(true)
     expect(config.database).toMatchObject({ poolMax: 20, statementTimeoutMs: 5000 })
     expect(config.logLevel).toBe('debug')
     expect(config.publicOrigin).toBe('http://localhost:5173')
@@ -74,7 +77,8 @@ describe('loadConfig', () => {
         WAM_DB_STATEMENT_TIMEOUT_MS: '1e4',
         WAM_LOG_LEVEL: 'verbose',
         WAM_SESSION_IDLE_MINUTES: '1',
-        WAM_SESSION_ABSOLUTE_HOURS: '48'
+        WAM_SESSION_ABSOLUTE_HOURS: '48',
+        WAM_IMPORT_ENABLED: 'yes'
       })
     )
     expect(problems.map((p) => p.split(' ')[0])).toEqual([
@@ -84,7 +88,8 @@ describe('loadConfig', () => {
       'WAM_DB_STATEMENT_TIMEOUT_MS',
       'WAM_LOG_LEVEL',
       'WAM_SESSION_IDLE_MINUTES',
-      'WAM_SESSION_ABSOLUTE_HOURS'
+      'WAM_SESSION_ABSOLUTE_HOURS',
+      'WAM_IMPORT_ENABLED'
     ])
   })
 

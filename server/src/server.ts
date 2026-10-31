@@ -1,9 +1,39 @@
-import type { FastifyInstance } from 'fastify'
+import type { FastifyInstance, FastifyRequest } from 'fastify'
 import { buildApp } from './app.js'
-import { describeDatabaseTarget, loadConfig, type Env } from './config.js'
+import { describeDatabaseTarget, loadConfig, type Env, type LogLevel } from './config.js'
 import { createDatabase, createPool } from './db/connection.js'
 import { assertDatabaseReadyForServer } from './db/safety.js'
-import { MAINTENANCE_INTERVAL_MS, runMaintenance } from './maintenance.js'
+import { runImportRetention } from './imports/imports.js'
+import { IMPORT_RETENTION_INTERVAL_MS, MAINTENANCE_INTERVAL_MS, runMaintenance } from './maintenance.js'
+
+/**
+ * What a request log line records: Fastify's default fields, with the URL's query string left out. Query
+ * strings carry search terms — a person's name among them (`/persons?q=…`) — and a log line is beyond the
+ * reach of erasure (decision PD-05; found by the system test). Path parameters are ids only.
+ */
+export function requestLogFields(request: FastifyRequest): Record<string, unknown> {
+  return {
+    method: request.method,
+    url: request.url.split('?')[0],
+    host: request.host,
+    remoteAddress: request.ip,
+    remotePort: request.socket.remotePort
+  }
+}
+
+/** The server's pino options (JSON lines on stdout). */
+export function loggerOptions(level: LogLevel) {
+  return {
+    level,
+    // Fastify's default request serializer logs no headers today; this
+    // keeps credentials out of the logs if that ever changes.
+    redact: {
+      paths: ['req.headers.authorization', 'req.headers.cookie', 'res.headers["set-cookie"]'],
+      censor: '[redacted]'
+    },
+    serializers: { req: requestLogFields }
+  }
+}
 
 export interface RunningServer {
   readonly app: FastifyInstance
@@ -22,8 +52,8 @@ export async function startServer(env: Env): Promise<RunningServer> {
   const config = loadConfig(env)
   let app: FastifyInstance | undefined
   const pool = createPool(config.database, (err) => {
-    if (app === undefined) console.error(`idle database connection failed: ${err.message}`)
-    else app.log.error({ err }, 'idle database connection failed')
+    if (app === undefined) console.error(`database connection failed: ${err.message}`)
+    else app.log.error({ err }, 'database connection failed')
   })
   const db = createDatabase(pool)
   try {
@@ -33,22 +63,16 @@ export async function startServer(env: Env): Promise<RunningServer> {
       publicOrigin: config.publicOrigin,
       sessions: config.sessions,
       mfaEncryptionKey: config.mfaEncryptionKey,
-      logger: {
-        level: config.logLevel,
-        // Fastify's default request serializer logs no headers today; this
-        // keeps credentials out of the logs if that ever changes.
-        redact: {
-          paths: ['req.headers.authorization', 'req.headers.cookie', 'res.headers["set-cookie"]'],
-          censor: '[redacted]'
-        }
-      }
+      importEnabled: config.importEnabled,
+      logger: loggerOptions(config.logLevel)
     })
     const url = await app.listen({ host: config.http.host, port: config.http.port })
     app.log.info(
       {
         environment: config.environment,
         publicOrigin: config.publicOrigin,
-        database: describeDatabaseTarget(config.database.connectionString)
+        database: describeDatabaseTarget(config.database.connectionString),
+        importEnabled: config.importEnabled
       },
       'server started'
     )
@@ -64,11 +88,27 @@ export async function startServer(env: Env): Promise<RunningServer> {
       )
     }, MAINTENANCE_INTERVAL_MS)
     maintenance.unref()
+    let retentionRun: Promise<void> = Promise.resolve()
+    const retention = (): void => {
+      retentionRun = runImportRetention(db).then(
+        (result) => {
+          running.log.info({ retention: result }, 'import retention completed')
+        },
+        (err: unknown) => {
+          running.log.error({ err }, 'import retention failed')
+        }
+      )
+    }
+    retention()
+    const retentionTimer = setInterval(retention, IMPORT_RETENTION_INTERVAL_MS)
+    retentionTimer.unref()
     return {
       app: running,
       url,
       close: async () => {
         clearInterval(maintenance)
+        clearInterval(retentionTimer)
+        await retentionRun
         await running.close()
         await db.destroy()
       }

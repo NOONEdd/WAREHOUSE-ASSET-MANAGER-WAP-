@@ -154,8 +154,8 @@ change to them.
 
 **Preview and confirmation** (your E-18 conditions: row-level validation, explicit confirmation, blank cells never
 erase, transactions, idempotency, no automatic merging of duplicates) are requirements of the 1B-3 import design
-(D-15 review §4.8–4.11). They need the asset schema and cannot be built or tested before Phase 1B-3, which waits for
-your explicit authorization (O-06 is resolved: no desktop data migration). What this evaluation already fixes at the
+(D-15 review §4.8–4.11). They need the asset schema, so they are built and tested in Phase 1B-3 (authorized 2026-10-28, O-15) once you
+have approved the asset-schema proposal. What this evaluation already fixes at the
 parser boundary: blank cells produce **no value at all** (not an empty
 string), so nothing downstream can mistake a blank for "erase"; every value carries its type; formulas, overlong text
 and formula-like text are flagged for the preview.
@@ -197,7 +197,8 @@ this sandbox, not approved values; they are re-evaluated on the target host (§7
 
 **Setting (E-18, 2026-10-28): 1 parse at a time by default; never more than 2.** Imports beyond the active ones wait
 in a queue with a visible status. The values are recorded in `tools/import-evaluation/lib/limits.mjs` (`OPERATIONAL`)
-for the 1B-3 implementation; no operational import code exists yet.
+for the 1B-3 implementation. The server's staged import (1B-3, working tree) has no parser, no upload route and no
+queue yet, and its routes exist only with `WAM_IMPORT_ENABLED=true` (default `false`).
 
 Sandbox evidence (not the target host):
 
@@ -253,7 +254,7 @@ import (stage 3) needs its own approval and every gate below.
 
 | # | Gate | State |
 |---|---|---|
-| G-1 | O-06 owner-side assessment done and its approved aggregate report reviewed (Phase 1B-3 starts only then) | **Satisfied through the documented alternative, not by the original procedure** (O-06 in the decision register, 2026-10-28): you did not run the assessment on your own PC; it ran in the development sandbox on a read-only copy of the backup you supplied, at your request, and its aggregate report was presented to you; you confirmed test data only, so no desktop data is migrated. Approving the O-06 record accepts this alternative in place of the owner-side run. Phase 1B-3 itself still needs your explicit authorization |
+| G-1 | O-06 owner-side assessment done and its approved aggregate report reviewed (Phase 1B-3 starts only then) | **Satisfied through the accepted alternative, not by the original procedure** (O-06 in the decision register; accepted by you on 2026-10-28): you did not run the assessment on your own PC; it ran in the development sandbox on a read-only copy of the backup you supplied, at your request, and its aggregate report was presented to you; you confirmed test data only, so no desktop data is migrated, and accepted this alternative in place of the owner-side run. Phase 1B-3 was authorized separately (O-15) |
 | G-2 | Representative workbooks **saved by Microsoft Excel** (invented data only) pass the harness with correct values — including Persian text, leading zeros, dates, formulas and merged cells | **Open** (no Excel in the sandbox; tested producers: openpyxl 3.1.5, XlsxWriter 3.2.9, LibreOffice Calc, ExcelJS 4.4.0, the corpus' own writer) |
 | G-3 | Limits re-evaluated **on the target server**: full harness run there; memory limits re-derived; timings with margin against 30 s; if the margin is thin, a lower ceiling is proposed to you, never a higher time limit | **Open** |
 | G-4 | Concurrency 2 only after the §5.2 evidence on the target host; until then 1 | **Open** (default 1) |
@@ -261,7 +262,7 @@ import (stage 3) needs its own approval and every gate below.
 | G-6 | `npm audit signatures` passes for the parser dependencies | **Open** (blocked in the sandbox by the network policy) |
 | G-7 | Third-party notice file with every licence text shipped with the server (§2.1) | **Open** |
 | G-8 | After the parser is integrated into `server/` (Phase 1B-3): the same corpus as automated tests there, dependency audits, `verify_artifacts.py` and the complete verification suite (desktop and server) all pass; repeated after any later parser or dependency change | **Open** |
-| G-9 | Preview with row-level validation, explicit confirmation, blank-never-erases, one transaction, idempotency, duplicates flagged and never merged — built and tested in 1B-3 | **Open** |
+| G-9 | Preview with row-level validation, explicit confirmation, blank-never-erases, one transaction, idempotency, duplicates flagged and never merged — built and tested in 1B-3 | **Open.** Server-side parts implemented and tested on invented rows (proposal §13.1: preview, one-transaction commit with stale-preview refusal, idempotency, duplicates flagged and never merged, blanks never erase); explicit confirmation is a UI step (1C); not assessed as a gate |
 
 ### 7.1 Minimum controls before a preview-only test of real spreadsheet data (O-14 stage 2, proposed)
 

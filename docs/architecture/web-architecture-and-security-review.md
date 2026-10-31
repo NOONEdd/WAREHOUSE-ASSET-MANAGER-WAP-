@@ -54,7 +54,9 @@ role or a schema/code mismatch. To follow: real foreign keys and `CHECK` constra
 (`version` column) on editable rows; idempotency keys on write APIs (D-05); `pg_dump`-based backups with a
 **timed restore drill** (Phase 1D). **Row-level security** [R]: adopt as defense in depth in 1B-4 only, with
 transaction-local context (`set_config(…, true)` inside the request's transaction) and tests proving it does
-not leak between pooled connections; application checks remain the primary control.
+not leak between pooled connections; application checks remain the primary control. (Moved into 1B-3 with the asset
+tables — [`asset-schema-proposal.md`](asset-schema-proposal.md) ED-1, approved with O-16 on 2026-10-30 — and
+implemented in migrations 0006–0007; register E-12.)
 
 ### 2.4 Authentication and sessions [specified 2026-10-27; implemented from 1B-2]
 The binding rules are in [`../security/identity-and-access.md`](../security/identity-and-access.md) §1, §3–§5,

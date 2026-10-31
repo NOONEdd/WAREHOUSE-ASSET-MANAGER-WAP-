@@ -39,7 +39,7 @@ export interface Harness {
   close(): Promise<void>
 }
 
-export async function createHarness(): Promise<Harness> {
+export async function createHarness(options: { readonly importEnabled?: boolean } = {}): Promise<Harness> {
   const tdb = await createTestDatabase()
   const ownerDb = connect(tdb.urls.owner)
   const { error } = await createMigrator(ownerDb).migrateToLatest()
@@ -47,7 +47,7 @@ export async function createHarness(): Promise<Harness> {
   const appDb = connect(tdb.urls.app)
   const superDb = connect(tdb.urls.superuser)
   const mfaKey = randomBytes(32)
-  const app = buildApp({ db: appDb, logger: false, publicOrigin: ORIGIN, sessions: SESSIONS, mfaEncryptionKey: mfaKey })
+  const app = buildApp({ db: appDb, logger: false, publicOrigin: ORIGIN, sessions: SESSIONS, mfaEncryptionKey: mfaKey, ...options })
   await app.ready()
   return {
     tdb,

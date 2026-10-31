@@ -43,6 +43,25 @@ describe('startServer', () => {
     }
   })
 
+  it('has no import routes by default, and runs import retention once at start-up', async () => {
+    const server = await startServer(serverEnv(tdb.urls.app))
+    try {
+      // Absent route: 404 even without a session (a declared route would answer 401 first).
+      expect((await fetch(`${server.url}/api/warehouses/1/imports`)).status).toBe(404)
+    } finally {
+      await server.close()
+    }
+    const { rows } = await sql<{ n: string }>`
+      SELECT count(*) AS n FROM wam.audit_events WHERE action = 'import.retention_applied'`.execute(superuser)
+    expect(Number(rows[0]?.n)).toBeGreaterThanOrEqual(1)
+    const enabled = await startServer(serverEnv(tdb.urls.app, { WAM_IMPORT_ENABLED: 'true' }))
+    try {
+      expect((await fetch(`${enabled.url}/api/warehouses/1/imports`)).status).toBe(401)
+    } finally {
+      await enabled.close()
+    }
+  })
+
   it('reports not-ready (503) when the database stops accepting the server, while staying live', async () => {
     const server = await startServer(serverEnv(tdb.urls.app))
     try {
@@ -59,6 +78,31 @@ describe('startServer', () => {
       await server.close()
     }
   })
+
+  it('keeps running when the database terminates connections while requests hold them (system-test finding)', async () => {
+    const server = await startServer(serverEnv(tdb.urls.app, { WAM_DB_POOL_MAX: '4' }))
+    try {
+      const terminate = () =>
+        sql`SELECT pg_terminate_backend(pid) FROM pg_stat_activity
+             WHERE datname = ${tdb.name} AND usename = 'wam_app' AND application_name = 'wam-server'`.execute(superuser)
+      // Requests that each take a connection, while the database keeps killing the server's connections.
+      for (let round = 0; round < 15; round += 1) {
+        const inFlight = Array.from({ length: 8 }, () => fetch(`${server.url}/health/ready`).then((r) => r.status, () => 0))
+        await terminate()
+        await Promise.all(inFlight)
+      }
+      // The process is still serving, and recovers its connections.
+      expect((await fetch(`${server.url}/health/live`)).status).toBe(200)
+      let ready = 0
+      for (let i = 0; i < 20 && ready !== 200; i += 1) {
+        ready = (await fetch(`${server.url}/health/ready`)).status
+        if (ready !== 200) await new Promise((resolve) => setTimeout(resolve, 100))
+      }
+      expect(ready).toBe(200)
+    } finally {
+      await server.close()
+    }
+  }, 60_000)
 
   it('refuses to start as the migration role', async () => {
     await expect(startServer(serverEnv(tdb.urls.owner))).rejects.toBeInstanceOf(DatabaseNotReadyError)

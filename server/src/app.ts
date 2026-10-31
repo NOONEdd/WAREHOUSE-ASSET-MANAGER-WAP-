@@ -13,7 +13,10 @@ import { registerHealthRoutes } from './http/health.js'
 import { registerAdminCatalogRoutes } from './http/routes/adminCatalogRoutes.js'
 import { registerAdminSecurityRoutes } from './http/routes/adminSecurityRoutes.js'
 import { registerAdminUserRoutes } from './http/routes/adminUserRoutes.js'
+import { registerAssetRoutes } from './http/routes/assetRoutes.js'
 import { registerAuthRoutes } from './http/routes/authRoutes.js'
+import { registerCatalogRoutes } from './http/routes/catalogRoutes.js'
+import { registerImportRoutes } from './http/routes/importRoutes.js'
 import { registerMeRoutes } from './http/routes/meRoutes.js'
 import { registerMfaRoutes } from './http/routes/mfaRoutes.js'
 
@@ -27,6 +30,8 @@ export interface AppOptions {
   /** See AppConfig.mfaEncryptionKey. */
   readonly mfaEncryptionKey: Buffer
   readonly readinessTimeoutMs?: number
+  /** See AppConfig.importEnabled. Off unless set: the import routes do not exist at all. */
+  readonly importEnabled?: boolean
 }
 
 /**
@@ -83,5 +88,8 @@ export function buildApp(options: AppOptions): FastifyInstance {
   registerAdminUserRoutes(app, { db: options.db })
   registerAdminCatalogRoutes(app, { db: options.db })
   registerAdminSecurityRoutes(app, { db: options.db })
+  registerCatalogRoutes(app, { db: options.db })
+  registerAssetRoutes(app, { db: options.db })
+  if (options.importEnabled === true) registerImportRoutes(app, { db: options.db })
   return app
 }

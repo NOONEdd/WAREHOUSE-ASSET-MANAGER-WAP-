@@ -12,7 +12,9 @@ export const SYSTEM_PERMISSIONS = {
   'profile.manage': 'Create, edit and delete warehouse permission profiles',
   'job_title.manage': 'Create and edit job titles',
   'warehouse.manage': 'Create, rename and deactivate warehouses',
-  'audit.view_all': 'View the complete audit trail'
+  'audit.view_all': 'View the complete audit trail',
+  'catalog.manage': 'Create, rename and deactivate item types, workshops, countries and asset statuses',
+  'person.erase': 'Erase the name of a person without a WAM account (one-way; history keeps the id)'
 } as const
 
 export const WAREHOUSE_PERMISSIONS = {

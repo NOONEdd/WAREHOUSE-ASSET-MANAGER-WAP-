@@ -74,7 +74,8 @@ value stops the process with a list of every problem (never echoing the value).
 | `WAM_HTTP_PORT` | no | `3000` | |
 | `WAM_DB_POOL_MAX` | no | `10` | Connections per server process (1–100). |
 | `WAM_DB_STATEMENT_TIMEOUT_MS` | no | `15000` | Per-statement limit for the server (100–600000). |
-| `WAM_LOG_LEVEL` | no | `info` | `fatal` `error` `warn` `info` `debug` `trace` `silent`. Logs are JSON on stdout. |
+| `WAM_LOG_LEVEL` | no | `info` | `fatal` `error` `warn` `info` `debug` `trace` `silent`. Logs are JSON on stdout. Request lines record the method and path, never the query string: query strings carry search terms, a person's name among them, and erasure cannot reach a log line (PD-05). |
+| `WAM_IMPORT_ENABLED` | no | `false` | `true` or `false`. Whether the staged-import routes (`/api/warehouses/:id/imports…`) exist at all. **Keep it `false`**: imports stay disabled until gates G-2…G-9 pass and O-14 admits real spreadsheets (decision O-16). Import retention runs daily either way. |
 
 For a Unix-socket connection, put the percent-encoded socket directory where the host goes:
 `postgresql://wam_app:PASSWORD@%2Fvar%2Frun%2Fpostgresql:5432/wam`.
@@ -169,12 +170,27 @@ migrations this code does not know. Each case has a test.
 
 Rules, outcomes and limitations: [`../docs/security/identity-and-access.md`](../docs/security/identity-and-access.md).
 
+## API (Phase 1B-3)
+
+Every change needs an `Idempotency-Key` header and, for an existing record, its `version`. Warehouse routes answer
+404 without the named permission in that warehouse, and run with that warehouse's row-level-security context.
+
+| Area | Endpoints |
+|---|---|
+| Catalogue (global) | `GET /api/catalog/:kind` (signed in; `kind` = `statuses`, `item-types`, `workshops`, `countries`), `POST /api/catalog/:kind`, `PATCH /api/catalog/:kind/:id` (`catalog.manage`) |
+| Assets | `GET /api/warehouses/:warehouseId/assets` (`?q=`, `statusId`, `itemTypeId`, `after`, `limit`), `/assets/count`, `/assets/:assetId`, `/assets/:assetId/history` (`asset.view`); `POST /assets` (`asset.create`); `PATCH /assets/:assetId` (`asset.edit`; `null` clears a field); `POST /assets/:assetId/status` (`asset.change_status`) |
+| People without accounts | `GET/POST /api/warehouses/:warehouseId/persons`, `PATCH /persons/:personId` (`asset.view` / `asset.edit`); `POST /persons/:personId/erase` (system permission `person.erase`; one-way; also in an inactive warehouse). After erasure, replaying an earlier create or rename request of that person returns an id-only tombstone (`displayName: null, erased: true`), never the name (migration 0008) |
+| Imports (only with `WAM_IMPORT_ENABLED=true`) | `GET /api/warehouses/:warehouseId/imports`, `/imports/:batchId` (rows paged), `POST /imports/:batchId/preview`, `/commit`, `/cancel` (`asset.import`). No upload route: no parser is approved (O-13, O-14). **A batch holds at most 5,000 non-blank data rows** (O-17; blank rows — every cell empty or whitespace — and the header do not count, invalid rows do): staging, preview and commit each refuse a larger batch with `422 IMPORT_TOO_LARGE`. The server never splits a batch: split a larger file into separate batches. Each batch is previewed and committed on its own and atomically; there is no whole-file atomicity, so batches committed earlier stay committed if a later one fails |
+
+Design and rules: [`../docs/architecture/asset-schema-proposal.md`](../docs/architecture/asset-schema-proposal.md).
+
 ## Performance check
 
-`npm run test:perf` (not part of `verify`; about 20 seconds in the sandbox) seeds a synthetic volume — 2,000 users, 50 warehouses,
+`npm run test:perf` (not part of `verify`; about 20 seconds in the sandbox for the identity part) seeds a synthetic volume — 2,000 users, 50 warehouses,
 5,000 sessions, 200,000 audit events, about 600 enrolled authenticators — measures login, the second sign-in step and
 authenticated reads over real HTTP, and checks with `EXPLAIN` that the per-request queries use indexes. Targets and
-results: `docs/STATUS.md`.
+results: `docs/STATUS.md`. It also stages, previews and commits a 50,000-row import of invented rows (creates, then
+updates) and clears both batches by retention — several minutes; results in the asset-schema proposal §13.1.
 
 ## Pinned versions (exact; verified on the npm registry, each at least 7 days old when adopted)
 

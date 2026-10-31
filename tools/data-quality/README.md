@@ -6,14 +6,15 @@ touches the real data, and the database itself is never sent anywhere. The resul
 schema and a migration rehearsal. The assessment actually performed departed from this procedure, and its outcome
 removed the migration (below).
 
-**Gate status: O-06 resolved (2026-10-28).** The desktop source database was inspected and contains test data only.
+**Gate status: O-06 resolved and accepted (2026-10-28).** The desktop source database was inspected and contains test data only.
 No desktop data migration is required for the WAM web application. This is not a finding that the database is
 empty: the inspected backup holds 5 assets (1 active, 4 soft-deleted), 9 `asset_transactions` rows and 118
 `audit_log` rows, which the owner confirmed are disposable test data. The owner supplied the backup to the
 development session instead of running the script on their own PC (a deviation from option B); evidence and
-details: [decision register, O-06](../../docs/decisions/decision-register.md). Closing O-06 does not authorize
-Phase 1B-3, which still needs the owner's explicit approval, and admits no spreadsheet data (Excel Source Admission
-Gate, O-14, proposed). The script and the runbook below stay available in case a desktop database holding company
+details: [decision register, O-06](../../docs/decisions/decision-register.md). The owner accepted
+this alternative on 2026-10-28 as satisfying O-06 and gate G-1 in place of the owner-side procedure, which did not
+take place. Closing O-06 admits no spreadsheet data (Excel Source Admission Gate, O-14, proposed); Phase 1B-3 was
+authorized separately (O-15). The script and the runbook below stay available in case a desktop database holding company
 data ever has to be assessed.
 
 | File | What it is |

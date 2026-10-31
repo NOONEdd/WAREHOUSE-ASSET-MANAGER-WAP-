@@ -40,6 +40,11 @@ export interface AppConfig {
    */
   readonly mfaEncryptionKey: Buffer
   readonly logLevel: LogLevel
+  /**
+   * Whether the staged-import routes exist (decision O-16). Off by default, and
+   * to stay off until gates G-2…G-9 pass and O-14 admits real spreadsheets.
+   */
+  readonly importEnabled: boolean
 }
 
 export interface MigrationConfig {
@@ -61,6 +66,7 @@ export class ConfigError extends Error {
 
 const ENVIRONMENTS: readonly AppEnvironment[] = ['development', 'test', 'production']
 const LOG_LEVELS: readonly LogLevel[] = ['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent']
+const SWITCH: readonly ('true' | 'false')[] = ['true', 'false']
 
 /** Configuration for the HTTP server process (`npm start`). */
 export function loadConfig(env: Env): AppConfig {
@@ -78,6 +84,7 @@ export function loadConfig(env: Env): AppConfig {
   const idleMinutes = readInteger(env, 'WAM_SESSION_IDLE_MINUTES', 30, 5, 240, problems)
   const absoluteHours = readInteger(env, 'WAM_SESSION_ABSOLUTE_HOURS', 12, 1, 24, problems)
   const mfaEncryptionKey = readKey(env, 'WAM_MFA_ENCRYPTION_KEY', problems)
+  const importEnabled = readEnum(env, 'WAM_IMPORT_ENABLED', SWITCH, 'false', problems) === 'true'
 
   if (
     environment === undefined ||
@@ -96,7 +103,8 @@ export function loadConfig(env: Env): AppConfig {
     database: { connectionString, poolMax, statementTimeoutMs },
     sessions: { idleMinutes, absoluteHours },
     mfaEncryptionKey,
-    logLevel
+    logLevel,
+    importEnabled
   }
 }
 

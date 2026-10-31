@@ -47,22 +47,31 @@ function assertNoSecrets(value: unknown, path: string): void {
   }
 }
 
-export async function recordAudit(db: Kysely<Database>, context: AuditContext, event: AuditEvent): Promise<void> {
+function auditRow(context: AuditContext, event: AuditEvent) {
   const details = event.details ?? {}
   assertNoSecrets(details, 'details')
-  await db
-    .insertInto('audit_events')
-    .values({
-      action: event.action,
-      outcome: event.outcome,
-      actor_user_id: event.actor?.id ?? null,
-      actor_username: event.actor?.username ?? null,
-      target_type: event.target?.type ?? null,
-      target_id: event.target === undefined ? null : String(event.target.id),
-      warehouse_id: event.warehouseId ?? null,
-      request_id: context.requestId,
-      source_ip: context.sourceIp,
-      details: JSON.stringify(details)
-    })
-    .execute()
+  return {
+    action: event.action,
+    outcome: event.outcome,
+    actor_user_id: event.actor?.id ?? null,
+    actor_username: event.actor?.username ?? null,
+    target_type: event.target?.type ?? null,
+    target_id: event.target === undefined ? null : String(event.target.id),
+    warehouse_id: event.warehouseId ?? null,
+    request_id: context.requestId,
+    source_ip: context.sourceIp,
+    details: JSON.stringify(details)
+  }
+}
+
+export async function recordAudit(db: Kysely<Database>, context: AuditContext, event: AuditEvent): Promise<void> {
+  await db.insertInto('audit_events').values(auditRow(context, event)).execute()
+}
+
+/** Several events of one request, in order, a few hundred per statement (an import commit writes one per row). */
+export async function recordAuditEvents(db: Kysely<Database>, context: AuditContext, events: readonly AuditEvent[]): Promise<void> {
+  const rows = events.map((event) => auditRow(context, event))
+  for (let start = 0; start < rows.length; start += 500) {
+    await db.insertInto('audit_events').values(rows.slice(start, start + 500)).execute()
+  }
 }

@@ -24,6 +24,11 @@ const DEFINITIONS = {
   PROFILE_IN_USE: [409, 'The profile is still assigned to users'],
   MFA_ALREADY_ENROLLED: [409, 'An authenticator app is already set up for this account'],
   ADMIN_MFA_REQUIRED: [409, 'Administrator profiles require an authenticator app that is already set up'],
+  WAREHOUSE_INACTIVE: [409, 'The warehouse is inactive; its assets and imports are read-only'],
+  IMPORT_STATE: [409, 'The import is not in a state that allows this'],
+  PERSON_ERASED: [409, 'This person has been erased and cannot be changed or chosen'],
+  IMPORT_STALE: [409, 'The data changed since the preview; preview the import again'],
+  IMPORT_TOO_LARGE: [422, 'An import batch may contain at most 5,000 non-empty data rows; split larger files into separate batches, each previewed and committed on its own'],
   IDEMPOTENCY_KEY_REUSED: [422, 'This Idempotency-Key was already used for a different request'],
   MFA_LOCKED: [423, 'Too many incorrect verification codes; ask an administrator to reset your sign-in'],
   TOO_MANY_REQUESTS: [429, 'Too many attempts; try again later']

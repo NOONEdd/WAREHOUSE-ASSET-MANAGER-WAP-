@@ -11,6 +11,12 @@ import type { Database } from './db/connection.js'
 
 export const MAINTENANCE_INTERVAL_MS = 15 * 60 * 1000
 
+// Import retention (decision O-16, PD-09) runs separately, once at start-up and then daily: the periods
+// (7/7/90 days) are constants inside wam.apply_import_retention(), so a missed day is caught up by the
+// next run, and each run writes one import.retention_applied audit event (Phase 1D alerts on none in
+// 48 hours). It runs whether or not imports are enabled.
+export const IMPORT_RETENTION_INTERVAL_MS = 24 * 60 * 60 * 1000
+
 export interface MaintenanceResult {
   readonly sessions: number
   readonly authFailures: number

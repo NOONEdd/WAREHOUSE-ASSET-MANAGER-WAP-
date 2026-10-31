@@ -18,13 +18,26 @@ import { authOf } from './authorization.js'
 //   - same key, different request   → 422 IDEMPOTENCY_KEY_REUSED.
 //
 // Keys are per user and kept 24 hours (src/maintenance.ts).
+//
+// Personal data (decision PD-05, review finding S-2): a response that contains the name of a person without
+// a WAM account names that person as its subject. Erasing the person replaces every such stored response
+// with an id-only tombstone and its fingerprint with TOMBSTONE_FINGERPRINT, in the erasing transaction
+// (migration 0008). A later request with such a key replays the tombstone, whatever its body: the
+// original request can no longer be compared, because its fingerprint was a hash of the name. A replay
+// that arrives while an erasure is tombstoning its row waits, as a concurrent duplicate does: its INSERT …
+// ON CONFLICT waits for the transaction changing the conflicting row (tested: personPrivacy.test.ts).
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
 export interface IdempotentResult<T> {
   readonly status: number
   readonly body: T
+  /** The person whose name `body` contains, if any (see above). */
+  readonly subjectPersonId?: number
 }
+
+/** What wam.persons_tombstone_idempotency() writes in place of an erased person's request fingerprint. */
+export const TOMBSTONE_FINGERPRINT = Buffer.alloc(32)
 
 /** JSON with object keys sorted, so the fingerprint does not depend on key order. */
 function canonical(value: unknown): string {
@@ -70,13 +83,18 @@ export async function sendIdempotent<T>(
         .where('user_id', '=', userId)
         .where('key', '=', key)
         .executeTakeFirstOrThrow()
-      if (!stored.fingerprint.equals(fingerprint) || stored.status_code === null) throw new AppError('IDEMPOTENCY_KEY_REUSED')
+      const tombstoned = stored.fingerprint.equals(TOMBSTONE_FINGERPRINT)
+      if ((!tombstoned && !stored.fingerprint.equals(fingerprint)) || stored.status_code === null) throw new AppError('IDEMPOTENCY_KEY_REUSED')
       return { status: stored.status_code, body: stored.response_body, replayed: true }
     }
     const result = await work(trx)
     await trx
       .updateTable('idempotency_keys')
-      .set({ status_code: result.status, response_body: JSON.stringify(result.body ?? null) })
+      .set({
+        status_code: result.status,
+        response_body: JSON.stringify(result.body ?? null),
+        ...(result.subjectPersonId === undefined ? {} : { subject_person_id: String(result.subjectPersonId) })
+      })
       .where('user_id', '=', userId)
       .where('key', '=', key)
       .execute()
