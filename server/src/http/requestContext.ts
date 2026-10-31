@@ -2,6 +2,7 @@ import type { FastifyRequest } from 'fastify'
 import type { Kysely } from 'kysely'
 import { recordAudit, type AuditActor, type AuditContext, type AuditEvent } from '../audit/audit.js'
 import type { Database } from '../db/connection.js'
+import { safeErrorSummary } from '../logPrivacy.js'
 
 // Small helpers shared by routes: the audit context and actor of a request.
 
@@ -15,7 +16,7 @@ export async function auditDenial(db: Kysely<Database>, request: FastifyRequest,
   try {
     await recordAudit(db, auditContext(request), event)
   } catch (err) {
-    request.log.error({ err, action: event.action }, 'audit write failed for a refused request')
+    request.log.error({ err: safeErrorSummary(err), action: event.action }, 'audit write failed for a refused request')
   }
 }
 

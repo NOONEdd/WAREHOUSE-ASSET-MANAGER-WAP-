@@ -2,7 +2,7 @@ import { randomBytes } from 'node:crypto'
 import type { FastifyInstance, InjectOptions, LightMyRequestResponse } from 'fastify'
 import { sql, type Kysely } from 'kysely'
 import { expect } from 'vitest'
-import { buildApp } from '../../src/app.js'
+import { buildApp, type AppOptions } from '../../src/app.js'
 import { hashPassword } from '../../src/auth/passwords.js'
 import { open, seal, secretKeyFrom, totpSecretContext } from '../../src/auth/secretBox.js'
 import { newTotpSecret, totpCode } from '../../src/auth/totp.js'
@@ -39,7 +39,13 @@ export interface Harness {
   close(): Promise<void>
 }
 
-export async function createHarness(options: { readonly importEnabled?: boolean } = {}): Promise<Harness> {
+export interface HarnessOptions {
+  readonly importEnabled?: boolean
+  /** pino options for the app; default false (no logging). Log-privacy tests pass the server's own options. */
+  readonly logger?: AppOptions['logger']
+}
+
+export async function createHarness(options: HarnessOptions = {}): Promise<Harness> {
   const tdb = await createTestDatabase()
   const ownerDb = connect(tdb.urls.owner)
   const { error } = await createMigrator(ownerDb).migrateToLatest()
@@ -47,7 +53,8 @@ export async function createHarness(options: { readonly importEnabled?: boolean 
   const appDb = connect(tdb.urls.app)
   const superDb = connect(tdb.urls.superuser)
   const mfaKey = randomBytes(32)
-  const app = buildApp({ db: appDb, logger: false, publicOrigin: ORIGIN, sessions: SESSIONS, mfaEncryptionKey: mfaKey, ...options })
+  const { logger = false, ...rest } = options
+  const app = buildApp({ db: appDb, logger, publicOrigin: ORIGIN, sessions: SESSIONS, mfaEncryptionKey: mfaKey, ...rest })
   await app.ready()
   return {
     tdb,

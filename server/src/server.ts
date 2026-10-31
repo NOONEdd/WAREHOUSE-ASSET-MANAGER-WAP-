@@ -4,6 +4,7 @@ import { describeDatabaseTarget, loadConfig, type Env, type LogLevel } from './c
 import { createDatabase, createPool } from './db/connection.js'
 import { assertDatabaseReadyForServer } from './db/safety.js'
 import { runImportRetention } from './imports/imports.js'
+import { safeErrorLine, safeErrorSummary, withLogPrivacy } from './logPrivacy.js'
 import { IMPORT_RETENTION_INTERVAL_MS, MAINTENANCE_INTERVAL_MS, runMaintenance } from './maintenance.js'
 
 /**
@@ -21,9 +22,9 @@ export function requestLogFields(request: FastifyRequest): Record<string, unknow
   }
 }
 
-/** The server's pino options (JSON lines on stdout). */
+/** The server's pino options (JSON lines on stdout); errors appear only as their summary (logPrivacy.ts). */
 export function loggerOptions(level: LogLevel) {
-  return {
+  return withLogPrivacy({
     level,
     // Fastify's default request serializer logs no headers today; this
     // keeps credentials out of the logs if that ever changes.
@@ -32,7 +33,7 @@ export function loggerOptions(level: LogLevel) {
       censor: '[redacted]'
     },
     serializers: { req: requestLogFields }
-  }
+  })
 }
 
 export interface RunningServer {
@@ -52,8 +53,8 @@ export async function startServer(env: Env): Promise<RunningServer> {
   const config = loadConfig(env)
   let app: FastifyInstance | undefined
   const pool = createPool(config.database, (err) => {
-    if (app === undefined) console.error(`database connection failed: ${err.message}`)
-    else app.log.error({ err }, 'database connection failed')
+    if (app === undefined) console.error(safeErrorLine('database connection failed', err))
+    else app.log.error({ err: safeErrorSummary(err) }, 'database connection failed')
   })
   const db = createDatabase(pool)
   try {
@@ -83,7 +84,7 @@ export async function startServer(env: Env): Promise<RunningServer> {
           running.log.info({ removed: result }, 'maintenance completed')
         },
         (err: unknown) => {
-          running.log.error({ err }, 'maintenance failed')
+          running.log.error({ err: safeErrorSummary(err) }, 'maintenance failed')
         }
       )
     }, MAINTENANCE_INTERVAL_MS)
@@ -95,7 +96,7 @@ export async function startServer(env: Env): Promise<RunningServer> {
           running.log.info({ retention: result }, 'import retention completed')
         },
         (err: unknown) => {
-          running.log.error({ err }, 'import retention failed')
+          running.log.error({ err: safeErrorSummary(err) }, 'import retention failed')
         }
       )
     }

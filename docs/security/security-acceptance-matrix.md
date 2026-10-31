@@ -98,7 +98,7 @@ run of the built server as real processes.
 | ASVS | Requirement (short) | Implementation | Status / evidence |
 |---|---|---|---|
 | 16.2.1, 16.2.2 | Who/what/when/where; UTC | `audit_events` (timestamptz), request IDs | **Done** — int/auth, int/adminApi |
-| 16.2.5 | Sensitive data never logged | secret-name guard in `audit.ts` (incl. recovery codes, otpauth links); log redaction | **Done** — unit (guard), int/auth and int/mfa (scans), smoke (log scan), mutation |
+| 16.2.5 | Sensitive data never logged | secret-name guard in `audit.ts` (incl. recovery codes, otpauth links); log redaction; request lines without query strings (ST-2); errors only as an allowlisted summary on every logging path (`logPrivacy.ts`, finding NF-1) | **Done in the application** — unit (guard, logPrivacy), int/auth, int/mfa, int/logPrivacy (sentinel scans of captured log lines, injected database faults), real-process check, mutation. **Open for the database server's own log**: `log_error_verbosity = terse` at deployment (Phase 1E) |
 | 16.3.1, 16.3.2 | Authentication events and authorization failures logged | login/setup/password events, second-step and MFA events, lock, `authz.denied`, `session.ended_mfa_required` | **Done** — int/auth, int/adminApi, int/mfa |
 | 16.4.1 | Log injection prevented | JSON logs (pino); parameterized audit inserts | **Done** (review) |
 | 16.4.2 | Logs protected from modification | audit append-only by privileges and trigger | **Done** — int/schema, mutation |

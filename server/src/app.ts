@@ -19,6 +19,7 @@ import { registerCatalogRoutes } from './http/routes/catalogRoutes.js'
 import { registerImportRoutes } from './http/routes/importRoutes.js'
 import { registerMeRoutes } from './http/routes/meRoutes.js'
 import { registerMfaRoutes } from './http/routes/mfaRoutes.js'
+import { withLogPrivacy } from './logPrivacy.js'
 
 export interface AppOptions {
   readonly db: Kysely<Database>
@@ -41,7 +42,8 @@ export interface AppOptions {
  */
 export function buildApp(options: AppOptions): FastifyInstance {
   const app = Fastify({
-    logger: options.logger,
+    // Whatever logger options a caller passes, errors are logged only as their summary (finding NF-1).
+    logger: withLogPrivacy(options.logger),
     // Request IDs are always generated here. A client-supplied
     // X-Request-Id is ignored so callers cannot forge or collide log
     // correlation IDs.

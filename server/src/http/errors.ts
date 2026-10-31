@@ -1,12 +1,14 @@
 import type { FastifyError, FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import { AppError } from '../appError.js'
+import { safeErrorSummary } from '../logPrivacy.js'
 
 // One error shape for every failed request:
 //   { "error": { "code": "NOT_FOUND", "message": "Not found", "requestId": "…" } }
 // The message is always a fixed text — for expected failures the one defined
 // with the AppError code, otherwise a generic text chosen here — never an
 // internal error message, which can contain SQL, file paths or data. The
-// full error is logged server-side under the same requestId.
+// error is logged server-side under the same requestId, as its allowlisted
+// summary only (finding NF-1: a database error's detail holds row values).
 
 export interface ErrorBody {
   readonly error: {
@@ -47,10 +49,10 @@ export function registerErrorHandling(app: FastifyInstance): void {
     }
     const status = typeof error.statusCode === 'number' && error.statusCode >= 400 && error.statusCode < 600 ? error.statusCode : 500
     if (status >= 500) {
-      request.log.error({ err: error }, 'request failed')
+      request.log.error({ err: safeErrorSummary(error), route: request.routeOptions.url ?? null }, 'request failed')
       return reply.status(500).send(errorBody('INTERNAL_ERROR', 'Internal server error', request.id))
     }
-    request.log.info({ err: error }, 'request rejected')
+    request.log.info({ err: safeErrorSummary(error), route: request.routeOptions.url ?? null }, 'request rejected')
     if (error.validation !== undefined) {
       return reply.status(400).send(errorBody('VALIDATION_FAILED', 'Request validation failed', request.id))
     }

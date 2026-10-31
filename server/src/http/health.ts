@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify'
 import { sql, type Kysely } from 'kysely'
 import type { Database } from '../db/connection.js'
+import { safeErrorSummary } from '../logPrivacy.js'
 
 // Health endpoints for the reverse proxy / process supervisor. They report
 // only "ok" or "unavailable": no version, hostname, database name or error
@@ -30,7 +31,7 @@ export function registerHealthRoutes(app: FastifyInstance, options: HealthOption
       await withTimeout(sql`SELECT 1`.execute(options.db), options.readinessTimeoutMs)
       return { status: 'ok' }
     } catch (err) {
-      request.log.warn({ err }, 'readiness check failed: database unavailable')
+      request.log.warn({ err: safeErrorSummary(err) }, 'readiness check failed: database unavailable')
       return reply.status(503).send({ status: 'unavailable' })
     }
   })

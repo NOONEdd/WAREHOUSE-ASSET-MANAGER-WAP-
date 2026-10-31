@@ -74,7 +74,7 @@ value stops the process with a list of every problem (never echoing the value).
 | `WAM_HTTP_PORT` | no | `3000` | |
 | `WAM_DB_POOL_MAX` | no | `10` | Connections per server process (1–100). |
 | `WAM_DB_STATEMENT_TIMEOUT_MS` | no | `15000` | Per-statement limit for the server (100–600000). |
-| `WAM_LOG_LEVEL` | no | `info` | `fatal` `error` `warn` `info` `debug` `trace` `silent`. Logs are JSON on stdout. Request lines record the method and path, never the query string: query strings carry search terms, a person's name among them, and erasure cannot reach a log line (PD-05). |
+| `WAM_LOG_LEVEL` | no | `info` | `fatal` `error` `warn` `info` `debug` `trace` `silent`. Logs are JSON on stdout. Request lines record the method and path, never the query string: query strings carry search terms, a person's name among them, and erasure cannot reach a log line (PD-05). Errors appear only as an allowlisted summary (see [Log privacy](#log-privacy)). |
 | `WAM_IMPORT_ENABLED` | no | `false` | `true` or `false`. Whether the staged-import routes (`/api/warehouses/:id/imports…`) exist at all. **Keep it `false`**: imports stay disabled until gates G-2…G-9 pass and O-14 admits real spreadsheets (decision O-16). Import retention runs daily either way. |
 
 For a Unix-socket connection, put the percent-encoded socket directory where the host goes:
@@ -139,6 +139,22 @@ It will not listen if its database role: is a superuser; has `BYPASSRLS`, `CREAT
 `REPLICATION`; owns or can create objects in schema `wam`; can create schemas in the database; can create
 objects in `public`; or if PostgreSQL is older than 16, migrations are pending, or the database has
 migrations this code does not know. Each case has a test.
+
+## Log privacy
+
+A log line never contains an error's message, a database error's `detail`, `hint`, `where` or internal query,
+SQL, parameters, row values, request bodies, cookies or tokens (finding NF-1: PostgreSQL's
+`Failing row contains (…)` carries a user's name and the start of their password hash). Errors are logged only as
+an allowlisted summary (`src/logPrivacy.ts`): kind, type, SQLSTATE and its class, severity, constraint name,
+application or Node error code, HTTP status, validation keyword and schema path, stack frames (code locations
+only), and the same for a nested cause. This holds for every logging path: the server's pino options,
+`buildApp` whatever logger options it is given, the request error handler, the pool and timer listeners, start-up,
+the CLIs' unexpected errors, and uncaught exceptions and unhandled rejections (one summary line, then exit 1).
+
+**PostgreSQL's own log is outside the application and must be configured at deployment.** With the default
+`log_error_verbosity`, the database server writes the same `DETAIL: Failing row contains (…)` into its log
+(verified on 16.15). Set `log_error_verbosity = terse`, keep `log_parameter_max_length_on_error = 0` (the
+default) and `log_statement = none`, and treat the database server's log as personal data.
 
 ## HTTP conventions (apply to every endpoint)
 
