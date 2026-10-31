@@ -2,6 +2,7 @@ import { createContext, useContext, useEffect, useMemo, useState } from 'react'
 import { ConfigProvider, theme as antdTheme } from 'antd'
 import faIR from 'antd/locale/fa_IR'
 import { lightTheme, darkTheme } from '../theme'
+import { usePrefersReducedMotion } from '../hooks/usePrefersReducedMotion'
 
 const ThemeContext = createContext(null)
 const STORAGE_KEY = 'awm-theme-mode'
@@ -17,6 +18,7 @@ function getInitialMode() {
 
 export function ThemeProvider({ children }) {
   const [mode, setMode] = useState(getInitialMode)
+  const reducedMotion = usePrefersReducedMotion()
 
   // Dark-mode bug fix: AntD's own components already switch correctly
   // below via ConfigProvider's `theme` prop, but everything styled with
@@ -45,9 +47,13 @@ export function ThemeProvider({ children }) {
     const base = mode === 'dark' ? darkTheme : lightTheme
     return {
       ...base,
+      // global.css already drops its own animations under the operating
+      // system's "reduce motion" setting; antd's (dropdowns, modals, the
+      // drawer, collapse) only stop when its `motion` token is off.
+      token: { ...base.token, motion: !reducedMotion },
       algorithm: mode === 'dark' ? antdTheme.darkAlgorithm : antdTheme.defaultAlgorithm
     }
-  }, [mode])
+  }, [mode, reducedMotion])
 
   return (
     <ThemeContext.Provider value={{ mode, toggleMode }}>

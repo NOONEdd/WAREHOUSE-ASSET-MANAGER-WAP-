@@ -50,6 +50,10 @@ export function registerAssetHandlers() {
     requireUser()
     return assetService.getAssetCountByCountry()
   })
+  ipcMain.handle('assets:dataQuality', () => {
+    requireUser()
+    return assetService.getDataQuality()
+  })
   ipcMain.handle('assets:recentActivity', (_event, limit) => {
     requireUser()
     return assetService.getRecentActivity(limit)

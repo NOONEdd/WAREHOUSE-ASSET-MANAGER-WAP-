@@ -120,6 +120,14 @@ const PROTECTED_CHANNELS = [
   ['assets:get', [1]],
   ['assets:dashboardStats', []],
   ['assets:countByWorkshop', []],
+  // Added with the completeness check below: guarded already, but missing
+  // from this list until then.
+  ['assets:countByItemType', []],
+  ['assets:countByCountry', []],
+  ['assets:recentActivity', [5]],
+  ['lookups:setActive', ['itemTypes', 99999, false]],
+  // Dashboard data-quality panel
+  ['assets:dataQuality', []],
   ['lookups:getAll', []],
   ['lookups:create', ['itemTypes', 'تجهیزات تست جدید']],
   ['lookups:delete', ['itemTypes', 99999]],
@@ -180,6 +188,19 @@ describe('Every sensitive IPC channel rejects an unauthenticated call', () => {
       )
     })
   }
+})
+
+// The channels that deliberately work without a session (auth.ipc.js
+// explains each one). Every other registered channel must be in
+// PROTECTED_CHANNELS, so a new handler cannot ship without this file
+// proving it rejects an anonymous call.
+const UNAUTHENTICATED_BY_DESIGN = ['auth:login', 'auth:logout', 'auth:currentUser', 'auth:needsFirstRunSetup', 'auth:completeFirstRunSetup']
+
+describe('Every registered channel is covered', () => {
+  it('is either in PROTECTED_CHANNELS or one of the documented unauthenticated channels', () => {
+    const covered = new Set([...PROTECTED_CHANNELS.map(([channel]) => channel), ...UNAUTHENTICATED_BY_DESIGN])
+    expect(Object.keys(handlers).filter((channel) => !covered.has(channel)).sort()).toEqual([])
+  })
 })
 
 describe('The same channels are not blocked by authentication once logged in', () => {

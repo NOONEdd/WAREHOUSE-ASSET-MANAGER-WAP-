@@ -39,7 +39,10 @@ export default function PageHeader({ title, description, actions }) {
           </Text>
         )}
       </div>
-      {actions && <div style={{ flexShrink: 0 }}>{actions}</div>}
+      {/* May shrink and wrap (the actions are a wrapping <Space>): on a
+          phone the asset list's eight actions would otherwise push the
+          page ~350px past the screen edge. */}
+      {actions && <div style={{ minWidth: 0, maxWidth: '100%' }}>{actions}</div>}
     </div>
   )
 }

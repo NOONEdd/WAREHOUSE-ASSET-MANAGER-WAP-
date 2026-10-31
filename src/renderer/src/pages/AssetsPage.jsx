@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Button, Input, Space, Card, Empty, Divider, Dropdown, message, Modal } from 'antd'
+import { Button, Input, Space, Card, Empty, Divider, Dropdown, message, Modal, Tag } from 'antd'
 import {
   PlusOutlined,
   UploadOutlined,
@@ -10,7 +10,8 @@ import {
   FilePdfOutlined,
   DeleteOutlined,
   SwapOutlined,
-  ExclamationCircleFilled
+  ExclamationCircleFilled,
+  SafetyCertificateOutlined
 } from '@ant-design/icons'
 import { useNavigate, useLocation } from 'react-router-dom'
 import AssetTable from '../components/assets/AssetTable'
@@ -46,6 +47,14 @@ const EXPORT_COLUMNS = [
 // once — PAGE_SIZE here is that page size, passed through as `limit`.
 const PAGE_SIZE = 50
 
+// Labels for the Dashboard's data-quality filter (filters.quality), shown
+// as a removable tag above the list while it is applied.
+const QUALITY_LABELS = {
+  noWorkshop: 'بدون واحد',
+  noEntryDate: 'بدون تاریخ ورود',
+  issuedNoReceiver: 'صادر شده بدون تحویل‌گیرنده'
+}
+
 export default function AssetsPage() {
   const navigate = useNavigate()
   const location = useLocation()
@@ -53,9 +62,14 @@ export default function AssetsPage() {
   // Seeded from Dashboard's clickable stat cards (navigate('/assets',
   // { state: { presetStatusId } })) so "در انبار: 128" actually takes you
   // to those 128 rows instead of just the unfiltered list.
-  const [filters, setFilters] = useState(() =>
-    location.state?.presetStatusId ? { statusId: location.state.presetStatusId } : {}
-  )
+  // The data-quality panel opens this list with { presetQuality }.
+  const [filters, setFilters] = useState(() => {
+    if (location.state?.presetStatusId) return { statusId: location.state.presetStatusId }
+    if (location.state?.presetQuality && QUALITY_LABELS[location.state.presetQuality]) {
+      return { quality: location.state.presetQuality }
+    }
+    return {}
+  })
   const [page, setPage] = useState(1)
   const [exporting, setExporting] = useState(null) // 'excel' | 'pdf' | null
   const [printing, setPrinting] = useState(false)
@@ -96,6 +110,11 @@ export default function AssetsPage() {
   function clearSearchAndFilters() {
     setSearch('')
     setFilters({})
+  }
+
+  function clearSelection() {
+    setSelectedRowKeys([])
+    setSelectedAssetsById({})
   }
 
   // Exports the *current* search/filter result — every matching row, not
@@ -215,9 +234,15 @@ export default function AssetsPage() {
     <div>
       <PageHeader
         title="دارایی‌ها"
-        description={!loading ? `${formatPersianNumber(total)} دارایی${isFiltered ? ' (نتیجهٔ فیلتر فعلی)' : ''}` : undefined}
+        description={
+          !loading ? (
+            <span data-awm-total aria-live="polite">
+              {`${formatPersianNumber(total)} دارایی${isFiltered ? ' (نتیجهٔ فیلتر فعلی)' : ''}`}
+            </span>
+          ) : undefined
+        }
         actions={
-          <Space size={4} wrap>
+          <Space size={4} wrap className="awm-actions">
             <Button type="primary" icon={<PlusOutlined />} onClick={() => navigate('/assets/new')}>
               افزودن دارایی
             </Button>
@@ -283,7 +308,10 @@ export default function AssetsPage() {
             size="large"
             prefix={<SearchOutlined style={{ color: 'var(--awm-text-secondary)' }} />}
             placeholder="جستجو با کد، سریال، نام، مدل یا شناسه..."
-            style={{ width: 320, background: 'var(--awm-surface)' }}
+            aria-label="جستجوی دارایی‌ها با کد، سریال، نام، مدل یا شناسه"
+            data-awm-search=""
+            autoFocus={Boolean(location.state?.focusSearch)}
+            style={{ flex: '1 1 260px', maxWidth: 360, minWidth: 0, background: 'var(--awm-surface)' }}
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             allowClear
@@ -302,6 +330,36 @@ export default function AssetsPage() {
           />
         </div>
       </div>
+
+      {filters.quality && (
+        <div style={{ marginBottom: 12 }}>
+          <Tag
+            icon={<SafetyCertificateOutlined />}
+            closable
+            closeIcon={<span aria-label="حذف فیلتر کیفیت داده">×</span>}
+            onClose={(e) => {
+              e.preventDefault()
+              setFilters(({ quality: _quality, ...rest }) => rest)
+            }}
+            style={{ fontSize: 13, padding: '3px 10px' }}
+          >
+            کیفیت داده: {QUALITY_LABELS[filters.quality]}
+          </Tag>
+        </div>
+      )}
+
+      {/* Bulk actions apply to the whole selection, which survives paging
+          and changing the search — so the number selected, and a way to
+          clear it, stay visible next to the list instead of only inside
+          the button labels. */}
+      {selectedRowKeys.length > 0 && (
+        <div className="awm-selection-bar" role="status">
+          <span style={{ fontWeight: 600 }}>{formatPersianNumber(selectedRowKeys.length)} مورد انتخاب شده</span>
+          <Button size="small" onClick={clearSelection}>
+            لغو انتخاب
+          </Button>
+        </div>
+      )}
 
       <Card size="small" styles={{ body: { padding: 0 } }}>
         {!loading && total === 0 ? (

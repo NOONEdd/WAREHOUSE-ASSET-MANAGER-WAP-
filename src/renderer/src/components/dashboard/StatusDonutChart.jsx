@@ -3,6 +3,7 @@ import { Empty } from 'antd'
 import { InboxOutlined, ExportOutlined, RollbackOutlined, WarningOutlined, QuestionCircleOutlined } from '@ant-design/icons'
 import { statusColors } from '../../theme'
 import { formatPersianNumber } from '../../utils/numberFormat'
+import { usePrefersReducedMotion } from '../../hooks/usePrefersReducedMotion'
 
 // One icon per official status, keyed by name exactly like statusColors —
 // تعمیر has no entry since it was dropped from the canonical set (see
@@ -25,6 +26,11 @@ const STATUS_ICONS = {
  * and every table/detail view read as one consistent system.
  */
 export default function StatusDonutChart({ byStatus, total }) {
+  // recharts draws the ring in with a JavaScript animation (~1.5 s) that
+  // the CSS reduced-motion rules cannot reach. recharts 3 already skips it
+  // under the system setting by default ('auto'); stated here so it does
+  // not depend on that library default.
+  const reducedMotion = usePrefersReducedMotion()
   if (!total) {
     return (
       <Empty
@@ -50,6 +56,7 @@ export default function StatusDonutChart({ byStatus, total }) {
             outerRadius={80}
             paddingAngle={2}
             stroke="none"
+            isAnimationActive={!reducedMotion}
           >
             {data.map((entry) => (
               <Cell key={entry.name} fill={statusColors[entry.name] || '#6b6560'} />

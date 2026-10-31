@@ -10,10 +10,21 @@
 // slightly denser table typography now that headers carry their own
 // weight instead of borrowing the body's.
 
+// Accessibility pass (WCAG 2.1 AA, measured with axe-core in the browser
+// end-to-end run): white text on the original gold #c8862b reaches only
+// 3.0:1, and the same gold as link text on the page background 2.8:1 —
+// both under the 4.5:1 that normal-size text needs. The primary color is
+// therefore a deeper bronze from the same family (#9a6418: 5.0:1 under
+// white text, 4.5:1 as text on --awm-paper). The bright gold stays as the
+// decorative accent (--awm-accent: sidebar, chips, rules), where no text
+// sits on it. Tertiary/placeholder text and the error red move the same
+// way, from 3.0:1 / 3.3:1 to 4.7:1 or more. Dark mode keeps the bright gold
+// (5.1:1 as text on a dark card) and puts dark text on primary buttons.
 export const lightTheme = {
   token: {
-    colorPrimary: '#c8862b',
-    colorLink: '#c8862b',
+    colorPrimary: '#9a6418',
+    colorLink: '#9a6418',
+    colorError: '#c62828',
     colorBgBase: '#f6f4ee',
     colorBgContainer: '#ffffff',
     colorBgLayout: '#f6f4ee',
@@ -26,7 +37,9 @@ export const lightTheme = {
     colorBorderSecondary: '#ece8de',
     colorText: '#232323',
     colorTextSecondary: '#6b675e',
-    colorTextTertiary: '#9a958a',
+    colorTextTertiary: '#6f6b62',
+    colorTextDescription: '#6b675e',
+    colorTextPlaceholder: '#77736a',
     fontFamily: "'Vazirmatn', Tahoma, 'Segoe UI', sans-serif",
     borderRadius: 6,
     borderRadiusLG: 10,
@@ -94,6 +107,9 @@ export const lightTheme = {
 export const darkTheme = {
   token: {
     ...lightTheme.token,
+    colorPrimary: '#c8862b',
+    colorLink: '#d79a45',
+    colorError: '#e27272',
     colorBgBase: '#181c22',
     colorBgContainer: '#20252d',
     colorBgLayout: '#181c22',
@@ -101,7 +117,9 @@ export const darkTheme = {
     colorBorder: '#333a44',
     colorText: '#e8e6e1',
     colorTextSecondary: '#9b968c',
-    colorTextTertiary: '#726e64'
+    colorTextTertiary: '#a39e93',
+    colorTextDescription: '#9b968c',
+    colorTextPlaceholder: '#a39e93'
   },
   components: {
     ...lightTheme.components,
@@ -139,7 +157,11 @@ export const darkTheme = {
     },
     Button: {
       fontWeight: 500,
-      primaryShadow: 'none'
+      primaryShadow: 'none',
+      // Near-black ink on the gold button: 5.0:1 against the shade the dark
+      // algorithm actually paints (#ad7528, measured in the browser run);
+      // white on it would be 3.0:1.
+      primaryColor: '#080b10'
     },
     Input: {
       activeShadow: '0 0 0 3px rgba(200, 134, 43, 0.18)'
@@ -163,10 +185,15 @@ export const darkTheme = {
 // "something's wrong here", which reads as absent/broken at a glance
 // even though the data and the count are both right. Moved to a color
 // no fallback or other status shares.
+//
+// Accessibility pass: badges carry white 12px text, so each color needs
+// 4.5:1 against white. صادر شده (#c8862b, 3.0:1) and مرجوع شده (#5a8f5e,
+// 3.8:1) moved to darker shades of the same hues (5.0:1 and 5.1:1); the
+// other three already passed.
 export const statusColors = {
   'در انبار': '#4a6fa5', // In Warehouse
-  'صادر شده': '#c8862b', // Issued
-  'مرجوع شده': '#5a8f5e', // Returned
+  'صادر شده': '#9a6418', // Issued
+  'مرجوع شده': '#477a4b', // Returned
   'آسیب‌دیده': '#b0472f', // Damaged
   مفقود: '#7a5980' // Lost
 }

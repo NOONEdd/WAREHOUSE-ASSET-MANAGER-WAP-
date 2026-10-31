@@ -311,6 +311,23 @@ present it as saved, and never persist it to browser storage. Do **not** replay 
 reconnection; a retry is an explicit user action that reuses the same `Idempotency-Key`, so it cannot duplicate the
 change if the first attempt did reach the server.
 
+### 6.3 Phones and PCs (owner requirement O-26, 2026-10-31; Phase 1C acceptance criteria)
+
+One responsive web application, equally good on phones and PCs:
+
+| Area | Requirement (checked before Phase 1C is accepted) |
+|---|---|
+| Widths | Every screen usable without sideways page scrolling from **360 px to 1920 px**; tested at 360 and 390 (phones, portrait and landscape), 768 and 834 (tablets), 1280, 1440 and 1920 (PCs). Wide tables scroll inside their own area |
+| Same functions | Everything available on a PC is available on a phone, unless you exempt a function explicitly (for example, if bulk imports are ever to be PC-only) |
+| Touch | Touch targets at least 24 × 24 CSS px (WCAG 2.2, 2.5.8), primary actions at least 44 × 44; nothing reachable only by hover; pinch-zoom never disabled |
+| Accessibility and language | WCAG 2.1 AA on every screen at phone and PC width (axe-core: no serious or critical findings); full keyboard use on PCs; right-to-left Persian layout; Persian digits for counts, Western digits for codes and serial numbers; animations off under the system's reduce-motion setting |
+| Browsers | Current Chrome and Edge on Windows; Chrome on Android; Safari on iPhone (versions from the last two years) |
+| Slow or unreliable networks | Fonts and assets served by the server itself (no CDN); the first screen usable within a few seconds on a throttled mobile connection, measured in the tests; the D-05 rules of §6.2 (not saved is shown as not saved, retry only by the user, same `Idempotency-Key`) |
+| Tests | Browser end-to-end tests of every flow at phone and PC widths on every change (CI), with screenshots; one check on a real Android phone and a real iPhone before the pilot |
+
+Where phones may connect from (company network only, or also mobile data) changes the security requirements:
+decision O-27.
+
 ## 7. Audit trail (ASVS V16)
 
 Append-only table `audit_events`: the server's role may only `INSERT` and `SELECT`; a trigger rejects `UPDATE`,

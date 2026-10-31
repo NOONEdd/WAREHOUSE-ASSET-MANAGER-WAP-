@@ -54,6 +54,14 @@ describe('savedFilterService', () => {
     })
   })
 
+  it('keeps the data-quality filter of the Dashboard panel, and refuses an unknown one', () => {
+    const entry = savedFilterService.create('بدون واحد', { quality: 'noWorkshop' })
+    expect(entry.filters.quality).toBe('noWorkshop')
+    expect(savedFilterService.list()[0].filters.quality).toBe('noWorkshop')
+    expect(() => savedFilterService.create('نامعتبر', { quality: 'everything' })).toThrow('فیلتر کیفیت داده نامعتبر است')
+    expect(savedFilterService.list()).toHaveLength(1)
+  })
+
   it('persists across multiple create() calls, preserving earlier entries', () => {
     savedFilterService.create('اول', { statusId: 1 })
     savedFilterService.create('دوم', { statusId: 2 })

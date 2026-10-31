@@ -9,9 +9,30 @@ const LIST_SELECT = `
   JOIN asset_statuses s ON s.id = a.status_id
 `
 
-function list({ search, statusId, workshopId, itemTypeId, countryId, from, to, limit = 50, offset = 0 } = {}) {
+// Data-quality checks shown on the Dashboard, and the matching `quality`
+// filter of list() below — one fixed SQL condition per check, so the count
+// the Dashboard shows and the rows the filtered list returns can never
+// disagree. Only `a.` columns (the COUNT query below has no joins); the
+// issued status is looked up by its system name, which lookupService
+// protects from renaming (SYSTEM_STATUS_NAMES). Informational only: none of
+// these is a rule the app enforces.
+export const QUALITY_CONDITIONS = {
+  noWorkshop: 'a.workshop_id IS NULL',
+  noEntryDate: "(a.warehouse_entry_date IS NULL OR TRIM(a.warehouse_entry_date) = '')",
+  issuedNoReceiver:
+    "a.status_id = (SELECT id FROM asset_statuses WHERE name = 'صادر شده') AND (a.received_by IS NULL OR TRIM(a.received_by) = '')"
+}
+
+function list({ search, statusId, workshopId, itemTypeId, countryId, from, to, quality, limit = 50, offset = 0 } = {}) {
   const clauses = ['a.is_deleted = 0']
   const params = []
+
+  if (quality) {
+    // An unknown value is refused rather than ignored — ignoring it would
+    // return the whole list under a "filtered" label.
+    if (!Object.hasOwn(QUALITY_CONDITIONS, quality)) throw new Error('فیلتر کیفیت داده نامعتبر است')
+    clauses.push(QUALITY_CONDITIONS[quality])
+  }
 
   if (search) {
     // CAST so a numeric id (e.g. 42) still matches via substring search,
@@ -69,6 +90,15 @@ function list({ search, statusId, workshopId, itemTypeId, countryId, from, to, l
   const total = db.prepare(`SELECT COUNT(*) as n FROM assets a ${where}`).get(...params).n
 
   return { rows, total }
+}
+
+function countQualityIssues() {
+  const db = getDatabase()
+  const counts = {}
+  for (const [key, condition] of Object.entries(QUALITY_CONDITIONS)) {
+    counts[key] = db.prepare(`SELECT COUNT(*) as n FROM assets a WHERE a.is_deleted = 0 AND ${condition}`).get().n
+  }
+  return counts
 }
 
 function getById(id) {
@@ -236,6 +266,7 @@ function getRecentlyModified(limit = 5) {
 
 export const assetRepository = {
   list,
+  countQualityIssues,
   getById,
   findByCodeOrSerial,
   findAllCodesAndSerials,

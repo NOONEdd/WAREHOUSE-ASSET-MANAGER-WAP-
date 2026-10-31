@@ -19,7 +19,10 @@ const items = [
   { key: '/settings', icon: <SettingOutlined />, label: 'تنظیمات' }
 ]
 
-export default function Sidebar() {
+// Brand block, navigation and footer — shared by the fixed sidebar (wide
+// and tablet widths) and the phone navigation drawer (AppShell), so both
+// show the same items in the same order.
+export function SidebarContent({ collapsed }) {
   const navigate = useNavigate()
   const location = useLocation()
   const version = useAppVersion()
@@ -28,8 +31,48 @@ export default function Sidebar() {
   const selectedKey = location.pathname.startsWith('/assets') ? '/assets' : location.pathname
 
   return (
+    <>
+      <div className={collapsed ? 'awm-sidebar-brand awm-sidebar-brand-collapsed' : 'awm-sidebar-brand'}>
+        <img src="./branding/sfz-mark.png" alt="" className="awm-sidebar-mark" />
+        {!collapsed && (
+          <div className="awm-sidebar-wordmark">
+            <span className="awm-sidebar-wordmark-title">سامانه انبار</span>
+            <span className="awm-sidebar-wordmark-sub">مدیریت دارایی‌های سازمانی</span>
+          </div>
+        )}
+      </div>
+
+      <div className="awm-sidebar-divider" />
+
+      <nav aria-label="منوی اصلی" style={{ flex: 1, minHeight: 0 }}>
+        <Menu
+          theme="dark"
+          mode="inline"
+          inlineCollapsed={collapsed}
+          selectedKeys={[selectedKey]}
+          items={items}
+          onClick={({ key }) => navigate(key)}
+          style={{ borderInlineEnd: 'none', paddingTop: 10, background: 'transparent' }}
+        />
+      </nav>
+
+      {!collapsed && (
+        <div className="awm-sidebar-footer">
+          <div>شرکت صنعت فرابر زرین</div>
+          {version && <div className="awm-sidebar-version">نسخه {version}</div>}
+        </div>
+      )}
+    </>
+  )
+}
+
+export default function Sidebar({ collapsed = false }) {
+  return (
     <Sider
       width={216}
+      collapsedWidth={72}
+      collapsed={collapsed}
+      trigger={null}
       theme="dark"
       // Phase 10 — a quiet vertical gradient (same ink family, just a
       // second stop) instead of a flat fill. The flex column that pins
@@ -43,29 +86,7 @@ export default function Sidebar() {
       }}
       styles={{ body: { display: 'flex', flexDirection: 'column', height: '100%' } }}
     >
-      <div className="awm-sidebar-brand">
-        <img src="./branding/sfz-mark.png" alt="" className="awm-sidebar-mark" />
-        <div className="awm-sidebar-wordmark">
-          <span className="awm-sidebar-wordmark-title">سامانه انبار</span>
-          <span className="awm-sidebar-wordmark-sub">مدیریت دارایی‌های سازمانی</span>
-        </div>
-      </div>
-
-      <div className="awm-sidebar-divider" />
-
-      <Menu
-        theme="dark"
-        mode="inline"
-        selectedKeys={[selectedKey]}
-        items={items}
-        onClick={({ key }) => navigate(key)}
-        style={{ borderInlineEnd: 'none', paddingTop: 10, background: 'transparent', flex: 1 }}
-      />
-
-      <div className="awm-sidebar-footer">
-        <div>شرکت صنعت فرابر زرین</div>
-        {version && <div className="awm-sidebar-version">نسخه {version}</div>}
-      </div>
+      <SidebarContent collapsed={collapsed} />
     </Sider>
   )
 }

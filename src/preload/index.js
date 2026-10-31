@@ -29,6 +29,7 @@ const api = {
     countByItemType: () => ipcRenderer.invoke('assets:countByItemType'),
     countByCountry: () => ipcRenderer.invoke('assets:countByCountry'),
     recentActivity: (limit) => ipcRenderer.invoke('assets:recentActivity', limit),
+    dataQuality: () => ipcRenderer.invoke('assets:dataQuality'),
     create: (input) => ipcRenderer.invoke('assets:create', input),
     update: (id, input) => ipcRenderer.invoke('assets:update', id, input),
     delete: (id) => ipcRenderer.invoke('assets:delete', id),

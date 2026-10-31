@@ -42,7 +42,10 @@ function pad2(n) {
  * timezone that have no meaning for a plain calendar date and are a
  * classic source of off-by-one-day bugs when round-tripped.
  */
-export default function JalaliDatePicker({ value, onChange, allowClear = true }) {
+// `ariaLabel` names the date as a whole (e.g. "از تاریخ"); each of the three
+// selects gets "<ariaLabel> — روز/ماه/سال" as its accessible name, since a
+// placeholder alone is not one.
+export default function JalaliDatePicker({ value, onChange, allowClear = true, ariaLabel = 'تاریخ' }) {
   const jalali = parseIsoDate(value)
 
   const years = Array.from({ length: 90 }, (_, i) => nowJy - 80 + i)
@@ -61,6 +64,7 @@ export default function JalaliDatePicker({ value, onChange, allowClear = true })
     <Space.Compact>
       <Select
         placeholder="روز"
+        aria-label={`${ariaLabel} — روز`}
         style={{ width: 70 }}
         value={jalali?.jd}
         allowClear={allowClear}
@@ -72,6 +76,7 @@ export default function JalaliDatePicker({ value, onChange, allowClear = true })
       />
       <Select
         placeholder="ماه"
+        aria-label={`${ariaLabel} — ماه`}
         style={{ width: 110 }}
         value={jalali?.jm}
         allowClear={allowClear}
@@ -80,6 +85,7 @@ export default function JalaliDatePicker({ value, onChange, allowClear = true })
       />
       <Select
         placeholder="سال"
+        aria-label={`${ariaLabel} — سال`}
         style={{ width: 90 }}
         value={jalali?.jy}
         allowClear={allowClear}

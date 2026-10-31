@@ -36,8 +36,8 @@
   --awm-text-secondary: #6b675e;
 
   --awm-status-warehouse: #4a6fa5;
-  --awm-status-issued: #c8862b;
-  --awm-status-returned: #5a8f5e;
+  --awm-status-issued: #9a6418;
+  --awm-status-returned: #477a4b;
   --awm-status-maintenance: #8a6d3f;
   --awm-status-damaged: #b0472f;
   --awm-status-lost: #7a5980;
@@ -543,4 +543,236 @@ html.dark .awm-import-icon-chip {
   padding: 10px 14px 6px;
   border-inline-start: 3px solid var(--awm-metric-color, var(--awm-border));
   height: 100%;
+}
+
+/* ---------------------------------------------------------------------
+   Responsive layout, keyboard access and accessibility pass
+   ------------------------------------------------------------------- */
+
+/* Skip link: the first Tab stop on every signed-in page. Off-screen until
+   it receives focus, then shown at the reading-start corner. */
+.awm-skip-link {
+  position: absolute;
+  inset-inline-start: 12px;
+  top: -48px;
+  z-index: 1100;
+  padding: 8px 14px;
+  border-radius: var(--awm-radius-md);
+  background: var(--awm-ink);
+  color: #fff;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.awm-skip-link:focus {
+  top: 12px;
+  outline: 2px solid var(--awm-accent);
+  outline-offset: 2px;
+}
+
+/* The main region receives focus from the skip link; no ring around the
+   whole page for that programmatic focus. */
+.awm-main:focus {
+  outline: none;
+}
+
+.awm-visually-hidden {
+  position: absolute !important;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* Header user menu trigger — a real button styled like the old row. */
+.awm-user-button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  transition: background-color 0.15s ease-out;
+}
+
+.awm-user-button:hover,
+.awm-user-button:focus-visible {
+  background-color: var(--awm-hover-tint);
+}
+
+/* Keyboard focus for the app's own clickable elements (antd components
+   keep their own focus styles). */
+.awm-user-button:focus-visible,
+.awm-quality-item:focus-visible,
+.awm-row-link:focus-visible,
+.awm-list-item-clickable:focus-visible {
+  outline: 2px solid var(--awm-accent);
+  outline-offset: 2px;
+}
+
+/* Collapsed (tablet) sidebar: the mark alone, centered in the rail. */
+.awm-sidebar-brand-collapsed {
+  justify-content: center;
+  padding-inline: 0;
+}
+
+/* Phone navigation drawer: the sidebar's ink surface. */
+.awm-nav-drawer .ant-drawer-header {
+  background: var(--awm-ink);
+  border-bottom-color: rgba(255, 255, 255, 0.08);
+}
+
+.awm-nav-drawer .ant-drawer-title,
+.awm-nav-drawer .ant-drawer-close {
+  color: #fff;
+}
+
+.awm-nav-drawer .ant-drawer-body {
+  background: linear-gradient(180deg, var(--awm-ink) 0%, var(--awm-ink-deep) 100%);
+}
+
+/* Shortcut keys in the help dialog. */
+.awm-kbd {
+  display: inline-block;
+  min-width: 26px;
+  padding: 1px 7px;
+  border: 1px solid var(--awm-border);
+  border-bottom-width: 2px;
+  border-radius: 5px;
+  background: var(--awm-surface-sunken);
+  font-family: 'JetBrains Mono', 'Consolas', monospace;
+  font-size: 12.5px;
+  text-align: center;
+  direction: ltr;
+}
+
+.awm-kbd-then {
+  color: var(--awm-text-secondary);
+  font-size: 12px;
+}
+
+.awm-shortcuts-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.awm-shortcuts-table td {
+  padding: 7px 0;
+  border-bottom: 1px solid var(--awm-border);
+}
+
+.awm-shortcuts-table td:last-child {
+  text-align: end;
+  white-space: nowrap;
+}
+
+/* Asset list: selection summary above the table. */
+.awm-selection-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  margin-bottom: 12px;
+  padding: 8px 12px;
+  border: 1px solid var(--awm-border);
+  border-inline-start: 3px solid var(--awm-accent);
+  border-radius: var(--awm-radius-md);
+  background: var(--awm-surface);
+}
+
+/* Asset code in the list: a real link to the details page, so the row can
+   be opened from the keyboard (the row itself is only a mouse target). */
+.awm-row-link {
+  color: inherit;
+  text-decoration: none;
+  border-radius: 4px;
+}
+
+.awm-row-link:hover .awm-code-chip {
+  border-color: var(--awm-accent);
+}
+
+/* Dashboard data-quality items. */
+.awm-quality-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--awm-border);
+  border-radius: var(--awm-radius-md);
+  background: var(--awm-surface);
+  color: inherit;
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+  transition: background-color 0.15s ease-out, border-color 0.15s ease-out;
+}
+
+.awm-quality-item:hover {
+  background: var(--awm-hover-tint);
+  border-color: var(--awm-accent);
+}
+
+.awm-quality-item[aria-disabled='true'] {
+  cursor: default;
+}
+
+.awm-quality-item[aria-disabled='true']:hover {
+  background: var(--awm-surface);
+  border-color: var(--awm-border);
+}
+
+/* Asset history timeline (details page). */
+.awm-history-meta {
+  color: var(--awm-text-secondary);
+  font-size: 12.5px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .awm-user-button,
+  .awm-quality-item,
+  .ant-card-bordered {
+    transition: none;
+  }
+}
+
+/* Phones: tighter hero figure and toolbar. */
+@media (max-width: 575px) {
+  .awm-hero-figure {
+    font-size: 30px;
+  }
+
+  .awm-toolbar {
+    padding: 10px;
+  }
+}
+
+/* Tables that keep their columns readable on narrow screens: the table
+   keeps a minimum width and scrolls sideways inside its own container. */
+.awm-table-scroll .ant-table-content {
+  overflow-x: auto;
+}
+
+.awm-table-scroll .ant-table-content > table {
+  min-width: 760px;
+}
+
+/* Phones: wrapped action rows and toolbars drop their vertical separators,
+   which otherwise dangle at the start or end of a wrapped line. */
+@media (max-width: 767px) {
+  .awm-actions .ant-divider-vertical,
+  .awm-actions .ant-space-item-split,
+  .awm-toolbar .ant-divider-vertical {
+    display: none;
+  }
 }

@@ -1,4 +1,5 @@
 import { settingsRepository } from '../repositories/settingsRepository'
+import { QUALITY_CONDITIONS } from '../repositories/assetRepository'
 
 // Phase 4.4 (Saved Filters) — deliberately reuses the existing settings
 // key/value table (settingsRepository) rather than a new database table:
@@ -36,11 +37,14 @@ function create(name, filters) {
   // Only the fields AssetFilters.jsx / AssetsPage.jsx actually use are
   // stored — an unrecognized/stray key from a future renderer change
   // won't silently accumulate in old saved presets.
-  const { search, statusId, workshopId, itemTypeId, countryId, from, to } = filters || {}
+  const { search, statusId, workshopId, itemTypeId, countryId, from, to, quality } = filters || {}
+  if (quality !== undefined && quality !== null && !Object.hasOwn(QUALITY_CONDITIONS, quality)) {
+    throw new Error('فیلتر کیفیت داده نامعتبر است')
+  }
   const entry = {
     id: `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`,
     name: trimmed,
-    filters: { search, statusId, workshopId, itemTypeId, countryId, from, to }
+    filters: { search, statusId, workshopId, itemTypeId, countryId, from, to, quality }
   }
 
   settingsRepository.set(SETTINGS_KEY, JSON.stringify([...existing, entry]))

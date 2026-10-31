@@ -27,7 +27,8 @@ export default function LoginPage() {
   return (
     <div
       style={{
-        height: '100vh',
+        minHeight: '100vh',
+        padding: 16,
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
@@ -36,7 +37,7 @@ export default function LoginPage() {
     >
       <Card
         className="awm-page-transition"
-        style={{ width: 420, boxShadow: 'var(--awm-hero-shadow)' }}
+        style={{ width: '100%', maxWidth: 420, boxShadow: 'var(--awm-hero-shadow)' }}
       >
         <div style={{ textAlign: 'center', marginBottom: 24 }}>
           <img

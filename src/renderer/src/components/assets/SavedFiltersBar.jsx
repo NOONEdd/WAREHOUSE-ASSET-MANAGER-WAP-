@@ -51,6 +51,7 @@ export default function SavedFiltersBar({ currentSearch, currentFilters, onApply
       <Space size={4}>
         <Select
           placeholder="فیلترهای ذخیره‌شده"
+          aria-label="فیلترهای ذخیره‌شده"
           style={{ width: 180, background: 'var(--awm-surface)' }}
           loading={loading}
           value={undefined}
@@ -77,7 +78,7 @@ export default function SavedFiltersBar({ currentSearch, currentFilters, onApply
           )}
         />
         <Tooltip title={hasActiveQuery ? 'ذخیره فیلتر فعلی' : 'ابتدا جستجو یا فیلتری اعمال کنید'}>
-          <Button icon={<SaveOutlined />} disabled={!hasActiveQuery} onClick={() => setSaveModalOpen(true)} />
+          <Button icon={<SaveOutlined />} aria-label="ذخیره فیلتر فعلی" disabled={!hasActiveQuery} onClick={() => setSaveModalOpen(true)} />
         </Tooltip>
       </Space>
 
@@ -93,6 +94,7 @@ export default function SavedFiltersBar({ currentSearch, currentFilters, onApply
       >
         <Input
           placeholder="نام این فیلتر را وارد کنید"
+          aria-label="نام فیلتر"
           value={name}
           onChange={(e) => setName(e.target.value)}
           onPressEnter={handleSave}

@@ -1,5 +1,12 @@
-import { Layout, Switch, Dropdown, Avatar, Typography } from 'antd'
-import { SunOutlined, MoonOutlined, UserOutlined, LogoutOutlined } from '@ant-design/icons'
+import { Layout, Switch, Dropdown, Avatar, Typography, Button, Tooltip } from 'antd'
+import {
+  SunOutlined,
+  MoonOutlined,
+  UserOutlined,
+  LogoutOutlined,
+  MenuOutlined,
+  QuestionCircleOutlined
+} from '@ant-design/icons'
 import { useNavigate } from 'react-router-dom'
 import { useThemeMode } from '../../context/ThemeContext'
 import { useAuth } from '../../context/AuthContext'
@@ -18,7 +25,7 @@ const ROLE_LABELS = {
   'Read Only': 'فقط مشاهده'
 }
 
-export default function Header() {
+export default function Header({ compact = false, navOpen = false, onToggleNav, onOpenHelp }) {
   const { mode, toggleMode } = useThemeMode()
   const { user, logout } = useAuth()
   const navigate = useNavigate()
@@ -53,7 +60,8 @@ export default function Header() {
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'space-between',
-        padding: '0 20px',
+        padding: compact ? '0 12px' : '0 20px',
+        gap: 12,
         borderBottom: '1px solid var(--awm-border)',
         height: 64,
         // Phase 10 — same tone as the page body (colorBgLayout/--awm-paper)
@@ -68,14 +76,28 @@ export default function Header() {
           own full-width row directly below this bar, per spec. Each page's
           own <PageHeader> now carries page-specific context, so this stays
           fixed brand chrome rather than duplicating a breadcrumb here. */}
-      <div style={{ display: 'flex', alignItems: 'center' }}>
+      <div style={{ display: 'flex', alignItems: 'center', minWidth: 0, gap: 8 }}>
+        {onToggleNav && (
+          <Button
+            type="text"
+            icon={<MenuOutlined />}
+            aria-label="منوی اصلی"
+            aria-expanded={navOpen}
+            onClick={onToggleNav}
+          />
+        )}
         <span className="awm-header-accent-bar" />
-        <Typography.Text strong style={{ fontSize: 15 }}>
-          سامانه مدیریت دارایی و انبار
+        <Typography.Text strong style={{ fontSize: compact ? 14 : 15 }} ellipsis>
+          {compact ? 'سامانه انبار' : 'سامانه مدیریت دارایی و انبار'}
         </Typography.Text>
       </div>
 
-      <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: compact ? 8 : 16, flexShrink: 0 }}>
+        {!compact && (
+          <Tooltip title="میان‌برهای صفحه‌کلید (?)">
+            <Button type="text" icon={<QuestionCircleOutlined />} aria-label="میان‌برهای صفحه‌کلید" onClick={onOpenHelp} />
+          </Tooltip>
+        )}
         <Switch
           checkedChildren={<MoonOutlined />}
           unCheckedChildren={<SunOutlined />}
@@ -83,14 +105,15 @@ export default function Header() {
           onChange={toggleMode}
           aria-label="تغییر حالت روشن/تاریک"
         />
-        <Dropdown menu={{ items: userMenuItems, onClick: handleMenuClick }} placement="bottomLeft">
-          <div
-            className="awm-list-item-clickable"
-            style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 8px' }}
-          >
-            <span>{user.fullName}</span>
+        {/* A real <button> (it was a <div>): reachable with Tab and opened
+            with Enter or Space, which also lets the menu move focus into
+            its items. On phones only the avatar shows; the name stays in
+            the accessible label. */}
+        <Dropdown menu={{ items: userMenuItems, onClick: handleMenuClick }} placement="bottomLeft" trigger={['click']}>
+          <button type="button" className="awm-user-button" aria-label={`حساب کاربری: ${user.fullName}`}>
+            {!compact && <span>{user.fullName}</span>}
             <Avatar size={28} icon={<UserOutlined />} style={{ background: 'var(--awm-ink)' }} />
-          </div>
+          </button>
         </Dropdown>
       </div>
     </AntHeader>

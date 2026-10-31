@@ -57,6 +57,14 @@ function getDashboardStats() {
   return { total, byStatus }
 }
 
+// Dashboard's data-quality panel: how many active assets lack a unit, an
+// entry date, or (while issued) a receiver. Each count uses the same SQL
+// condition as listAssets({ quality }), so opening the matching list shows
+// exactly that many rows.
+function getDataQuality() {
+  return assetRepository.countQualityIssues()
+}
+
 // Phase 4.2 — Dashboard's "recently added / recently modified" section.
 // Sensible fixed limit (5-10 per the phase plan) rather than anything
 // user-configurable — this is a glanceable dashboard widget, not a
@@ -484,6 +492,7 @@ function changeAssetStatusBulk(ids, { newStatus, deliveredBy, receivedBy, notes 
 }
 
 export const assetService = {
+  getDataQuality,
   listAssets,
   getAsset,
   getDashboardStats,

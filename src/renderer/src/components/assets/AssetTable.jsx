@@ -1,5 +1,7 @@
 import { Table } from 'antd'
+import { Link } from 'react-router-dom'
 import StatusBadge from './StatusBadge'
+import { formatPersianNumber } from '../../utils/numberFormat'
 
 // Phase 9: asset code / serial number get a distinct "code chip" treatment
 // (mono font, subtle bordered pill) instead of plain mono text — these are
@@ -18,7 +20,19 @@ const columns = [
     dataIndex: 'assetCode',
     key: 'assetCode',
     width: 150,
-    render: (v) => <CodeChip value={v} />
+    // A real link to the details page: the row's own click handler only
+    // serves the mouse, so this is how a keyboard user opens an asset
+    // (Tab to the code, Enter). HashRouter renders it as href="#/assets/:id".
+    render: (v, record) => (
+      <Link
+        to={`/assets/${record.id}`}
+        className="awm-row-link"
+        aria-label={`جزئیات دارایی ${v}`}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <CodeChip value={v} />
+      </Link>
+    )
   },
   { title: 'نام دارایی', dataIndex: 'assetName', key: 'assetName', ellipsis: true },
   {
@@ -73,11 +87,17 @@ export default function AssetTable({
       size="middle"
       loading={loading}
       rowSelection={rowSelection}
+      // Below ~760px the columns scroll inside the table instead of
+      // widening the whole page (global.css .awm-table-scroll). Not antd's
+      // scroll={{ x }}: that adds an aria-hidden measuring row holding a
+      // focusable copy of the "select all" checkbox (axe: aria-hidden-focus).
+      className="awm-table-scroll"
       pagination={{
         current: page,
         pageSize,
         total,
-        showTotal: (t) => `${t} دارایی`,
+        showSizeChanger: false,
+        showTotal: (t) => `${formatPersianNumber(t)} دارایی`,
         onChange: onPageChange
       }}
       onRow={(record) => ({

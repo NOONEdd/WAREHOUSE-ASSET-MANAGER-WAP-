@@ -1,4 +1,4 @@
-import { Row, Col, Card, Typography, List, Empty, Spin, Button, Space } from 'antd'
+import { Row, Col, Card, Typography, List, Empty, Spin, Button, Space, Alert } from 'antd'
 import {
   PlusOutlined,
   UploadOutlined,
@@ -9,12 +9,14 @@ import {
   PieChartOutlined,
   HistoryOutlined,
   PlusCircleOutlined,
-  EditOutlined
+  EditOutlined,
+  SafetyCertificateOutlined,
+  LeftOutlined
 } from '@ant-design/icons'
 import { useNavigate } from 'react-router-dom'
 import { formatPersianNumber } from '../utils/numberFormat'
 import { toJalaliDisplay } from '../utils/dateDisplay'
-import { useDashboardStats, useRecentActivity } from '../hooks/useAssets'
+import { useDashboardData, useDataQuality, useRecentActivity } from '../hooks/useAssets'
 import { useAuditLog } from '../hooks/useAuditLog'
 import { useLookups } from '../hooks/useLookups'
 import StatusDonutChart from '../components/dashboard/StatusDonutChart'
@@ -130,20 +132,22 @@ function AssetMiniList({ assets, dateField, emptyText, navigate }) {
       size="small"
       dataSource={assets}
       renderItem={(asset) => (
-        <List.Item
-          onClick={() => navigate(`/assets/${asset.id}`)}
-          className="awm-list-item-clickable"
-          style={{ paddingInline: 8 }}
-          tabIndex={0}
-          role="button"
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' || e.key === ' ') {
-              e.preventDefault()
-              navigate(`/assets/${asset.id}`)
-            }
-          }}
-        >
-          <div style={{ width: '100%', display: 'flex', justifyContent: 'space-between', gap: 8 }}>
+        // The button role sits on an element inside the <li>: a role on the
+        // <li> itself hides it from the list (axe: "list" violation).
+        <List.Item style={{ padding: 0 }}>
+          <div
+            onClick={() => navigate(`/assets/${asset.id}`)}
+            className="awm-list-item-clickable"
+            style={{ width: '100%', display: 'flex', justifyContent: 'space-between', gap: 8, padding: '8px' }}
+            tabIndex={0}
+            role="button"
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault()
+                navigate(`/assets/${asset.id}`)
+              }
+            }}
+          >
             <div style={{ minWidth: 0 }}>
               <Text strong className="awm-mono">
                 {asset.assetCode}
@@ -162,9 +166,84 @@ function AssetMiniList({ assets, dateField, emptyText, navigate }) {
   )
 }
 
+// Data-quality panel: what each check means, and the `quality` filter of
+// the asset list that shows exactly those assets (assetRepository's
+// QUALITY_CONDITIONS — the count and the list use the same condition).
+const QUALITY_ITEMS = [
+  { key: 'noWorkshop', label: 'بدون واحد', hint: 'واحد/بخش ثبت نشده است' },
+  { key: 'noEntryDate', label: 'بدون تاریخ ورود', hint: 'تاریخ ورود به انبار ثبت نشده است' },
+  { key: 'issuedNoReceiver', label: 'صادر شده بدون تحویل‌گیرنده', hint: 'وضعیت «صادر شده» بدون نام تحویل‌گیرنده' }
+]
+
+function DataQualityPanel({ quality, navigate }) {
+  if (quality?.failed) {
+    return <Alert type="warning" showIcon message="بررسی کیفیت داده‌ها بارگذاری نشد" />
+  }
+  if (!quality) {
+    return (
+      <div className="awm-loading" style={{ padding: 24, textAlign: 'center' }}>
+        <Spin />
+      </div>
+    )
+  }
+  const allClear = QUALITY_ITEMS.every((item) => quality[item.key] === 0)
+  return (
+    <div style={{ display: 'grid', gap: 8 }}>
+      {allClear && (
+        <Text type="secondary" style={{ fontSize: 12.5 }}>
+          هیچ موردی برای بررسی یافت نشد.
+        </Text>
+      )}
+      {QUALITY_ITEMS.map((item) => {
+        const count = quality[item.key] ?? 0
+        const open = () => count > 0 && navigate('/assets', { state: { presetQuality: item.key } })
+        return (
+          <div
+            key={item.key}
+            role="button"
+            tabIndex={count > 0 ? 0 : -1}
+            aria-disabled={count === 0}
+            className="awm-quality-item"
+            onClick={open}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault()
+                open()
+              }
+            }}
+          >
+            <span style={{ minWidth: 0 }}>
+              <span style={{ display: 'block', fontWeight: 600, fontSize: 13 }}>{item.label}</span>
+              <span style={{ display: 'block', fontSize: 12, color: 'var(--awm-text-secondary)' }}>{item.hint}</span>
+            </span>
+            <span style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+              <span className="awm-mono" style={{ fontSize: 17, fontWeight: 600 }}>
+                {formatPersianNumber(count)}
+              </span>
+              {count > 0 && <LeftOutlined aria-hidden style={{ fontSize: 11, color: 'var(--awm-text-secondary)' }} />}
+            </span>
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+function SectionTitle({ icon, children }) {
+  return (
+    <span>
+      <span className="awm-section-icon" aria-hidden>
+        {icon}
+      </span>
+      {children}
+    </span>
+  )
+}
+
 export default function DashboardPage() {
   const navigate = useNavigate()
-  const stats = useDashboardStats()
+  const { stats, failed: statsFailed, reload: reloadStats } = useDashboardData()
+  const quality = useDataQuality()
   const { rows: entries, loading: activityLoading } = useAuditLog({ limit: 5 })
   const { recentlyAdded, recentlyModified } = useRecentActivity(5)
   const { lookups } = useLookups()
@@ -179,13 +258,15 @@ export default function DashboardPage() {
     navigate('/assets', status ? { state: { presetStatusId: status.id } } : undefined)
   }
 
+  // A figure while loading shows a spinner; after a failed load, a dash
+  // (the alert above the cards says why) — never a made-up zero.
+  const figure = (value) => (stats ? formatPersianNumber(value) : statsFailed ? '—' : <Spin size="small" />)
+
   // Phase 10 — composition only: statCardsFrom's data/order/click-target
   // logic is untouched. Card 0 ("کل دارایی‌ها") becomes the full hero;
-  // the remaining three render in a single row beside it (previously a
-  // 2×2 grid for four cards — reduced to one row of three when "تعمیر"
-  // was dropped from the system status set, so the total is still the
-  // visually dominant figure instead of one of several identically-sized
-  // cards).
+  // the remaining three sit beside it on wide screens and wrap below it
+  // on narrower ones (auto-fit grid), so the total stays the visually
+  // dominant figure at every width.
   const [heroCard, ...secondaryCards] = statCardsFrom(stats)
   const heroClickable = Boolean(heroCard.statuses)
 
@@ -206,12 +287,27 @@ export default function DashboardPage() {
         }
       />
 
-      <Row gutter={16} style={{ marginBottom: 16 }}>
-        <Col span={7}>
+      {statsFailed && (
+        <Alert
+          type="error"
+          showIcon
+          style={{ marginBottom: 16 }}
+          message="آمار داشبورد بارگذاری نشد"
+          description="ارقام زیر تا بارگذاری دوباره نمایش داده نمی‌شوند."
+          action={
+            <Button size="small" onClick={reloadStats}>
+              تلاش دوباره
+            </Button>
+          }
+        />
+      )}
+
+      <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
+        <Col xs={24} lg={7}>
           <Card
             className={heroClickable ? 'awm-hero-card awm-stat-card' : 'awm-hero-card'}
             styles={{ body: { padding: 20, height: '100%', display: 'flex', alignItems: 'center' } }}
-            style={{ height: '100%', minHeight: 148 }}
+            style={{ height: '100%', minHeight: 132 }}
             onClick={heroClickable ? () => goToAssets(heroCard) : undefined}
             tabIndex={heroClickable ? 0 : undefined}
             role={heroClickable ? 'button' : undefined}
@@ -231,22 +327,18 @@ export default function DashboardPage() {
               <div className="awm-hero-icon-chip">{heroCard.icon}</div>
               <div style={{ minWidth: 0 }}>
                 <div className="awm-hero-label">{heroCard.label}</div>
-                <div className="awm-mono awm-hero-figure">
-                  {stats ? formatPersianNumber(heroCard.value) : <Spin size="small" />}
-                </div>
+                <div className="awm-mono awm-hero-figure">{figure(heroCard.value)}</div>
               </div>
             </div>
           </Card>
         </Col>
-        <Col span={17}>
+        <Col xs={24} lg={17}>
           <div
             style={{
               display: 'grid',
-              gridTemplateColumns: '1fr 1fr 1fr',
-              gridTemplateRows: '1fr',
+              gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))',
               gap: 12,
-              height: '100%',
-              minHeight: 148
+              height: '100%'
             }}
           >
             {secondaryCards.map((card) => {
@@ -270,8 +362,8 @@ export default function DashboardPage() {
                         }
                       : undefined
                   }
-                  style={{ height: '100%', '--awm-metric-color': card.tint }}
-                  styles={{ body: { padding: '0 14px', height: '100%', display: 'flex', alignItems: 'center' } }}
+                  style={{ height: '100%', minHeight: 84, '--awm-metric-color': card.tint }}
+                  styles={{ body: { padding: '12px 14px', height: '100%', display: 'flex', alignItems: 'center' } }}
                 >
                   <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
                     <div
@@ -285,7 +377,7 @@ export default function DashboardPage() {
                         {card.label}
                       </Text>
                       <div className="awm-mono" style={{ fontSize: 20, fontWeight: 600, lineHeight: 1.3 }}>
-                        {stats ? formatPersianNumber(card.value) : <Spin size="small" />}
+                        {figure(card.value)}
                       </div>
                     </div>
                   </div>
@@ -296,22 +388,17 @@ export default function DashboardPage() {
         </Col>
       </Row>
 
-      <Row gutter={16}>
-        <Col span={14}>
+      <Row gutter={[16, 16]}>
+        <Col xs={24} lg={14}>
           <Card
-            title={
-              <span>
-                <span className="awm-section-icon">
-                  <PieChartOutlined />
-                </span>
-                روند وضعیت دارایی‌ها
-              </span>
-            }
+            title={<SectionTitle icon={<PieChartOutlined />}>توزیع وضعیت دارایی‌ها</SectionTitle>}
             size="small"
-            style={{ height: 280 }}
+            style={{ height: '100%', minHeight: 280 }}
           >
             {stats ? (
               <StatusDonutChart byStatus={stats.byStatus} total={stats.total} />
+            ) : statsFailed ? (
+              <Empty description="آمار در دسترس نیست" image={Empty.PRESENTED_IMAGE_SIMPLE} />
             ) : (
               <div
                 className="awm-loading"
@@ -322,23 +409,28 @@ export default function DashboardPage() {
             )}
           </Card>
         </Col>
-        <Col span={10}>
+        <Col xs={24} lg={10}>
           <Card
-            title={
-              <span>
-                <span className="awm-section-icon">
-                  <HistoryOutlined />
-                </span>
-                فعالیت‌های اخیر
-              </span>
-            }
+            title={<SectionTitle icon={<SafetyCertificateOutlined />}>کیفیت داده‌ها</SectionTitle>}
+            size="small"
+            style={{ height: '100%', minHeight: 280 }}
+          >
+            <DataQualityPanel quality={quality} navigate={navigate} />
+          </Card>
+        </Col>
+      </Row>
+
+      <Row gutter={[16, 16]} style={{ marginTop: 16 }}>
+        <Col xs={24} lg={8}>
+          <Card
+            title={<SectionTitle icon={<HistoryOutlined />}>فعالیت‌های اخیر</SectionTitle>}
             extra={
               <Button type="link" size="small" style={{ padding: 0 }} onClick={() => navigate('/audit-log')}>
                 مشاهده همه
               </Button>
             }
             size="small"
-            style={{ height: 280, overflow: 'auto' }}
+            style={{ height: '100%', minHeight: 260 }}
           >
             {!activityLoading && entries.length === 0 ? (
               <Empty description="هنوز فعالیتی ثبت نشده" image={Empty.PRESENTED_IMAGE_SIMPLE} />
@@ -349,38 +441,43 @@ export default function DashboardPage() {
                 dataSource={entries}
                 renderItem={(item) => {
                   const clickable = item.entity_type === 'Asset' && item.entity_id
-                  return (
-                    <List.Item
-                      onClick={() => clickable && navigate(`/assets/${item.entity_id}`)}
-                      className={clickable ? 'awm-list-item-clickable' : undefined}
-                      style={clickable ? { paddingInline: 8 } : undefined}
-                      tabIndex={clickable ? 0 : undefined}
-                      role={clickable ? 'button' : undefined}
-                      onKeyDown={
-                        clickable
-                          ? (e) => {
-                              if (e.key === 'Enter' || e.key === ' ') {
-                                e.preventDefault()
-                                navigate(`/assets/${item.entity_id}`)
-                              }
-                            }
-                          : undefined
-                      }
-                    >
-                      <div style={{ width: '100%' }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                          <Text strong>
-                            {ENTITY_LABELS[item.entity_type] || item.entity_type}
-                            {item.entity_id ? ` #${item.entity_id}` : ''}
-                          </Text>
-                          <Text type="secondary" style={{ fontSize: 12 }}>
-                            {toJalaliDisplay(item.occurred_at)}
-                          </Text>
-                        </div>
-                        <Text type="secondary" style={{ fontSize: 12 }}>
-                          {ACTION_LABELS[item.action] || item.action} · {item.username_snapshot}
+                  const content = (
+                    <div style={{ width: '100%' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
+                        <Text strong>
+                          {ENTITY_LABELS[item.entity_type] || item.entity_type}
+                          {item.entity_id ? ` #${item.entity_id}` : ''}
+                        </Text>
+                        <Text type="secondary" style={{ fontSize: 12, whiteSpace: 'nowrap' }}>
+                          {toJalaliDisplay(item.occurred_at)}
                         </Text>
                       </div>
+                      <Text type="secondary" style={{ fontSize: 12 }}>
+                        {ACTION_LABELS[item.action] || item.action} · {item.username_snapshot}
+                      </Text>
+                    </div>
+                  )
+                  return (
+                    <List.Item style={clickable ? { padding: 0 } : undefined}>
+                      {clickable ? (
+                        <div
+                          onClick={() => navigate(`/assets/${item.entity_id}`)}
+                          className="awm-list-item-clickable"
+                          style={{ width: '100%', padding: 8 }}
+                          tabIndex={0}
+                          role="button"
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter' || e.key === ' ') {
+                              e.preventDefault()
+                              navigate(`/assets/${item.entity_id}`)
+                            }
+                          }}
+                        >
+                          {content}
+                        </div>
+                      ) : (
+                        content
+                      )}
                     </List.Item>
                   )
                 }}
@@ -388,21 +485,11 @@ export default function DashboardPage() {
             )}
           </Card>
         </Col>
-      </Row>
-
-      <Row gutter={16} style={{ marginTop: 16 }}>
-        <Col span={12}>
+        <Col xs={24} md={12} lg={8}>
           <Card
-            title={
-              <span>
-                <span className="awm-section-icon">
-                  <PlusCircleOutlined />
-                </span>
-                دارایی‌های تازه‌افزوده
-              </span>
-            }
+            title={<SectionTitle icon={<PlusCircleOutlined />}>دارایی‌های تازه‌افزوده</SectionTitle>}
             size="small"
-            style={{ height: 260, overflow: 'auto' }}
+            style={{ height: '100%', minHeight: 260 }}
           >
             <AssetMiniList
               assets={recentlyAdded}
@@ -412,18 +499,11 @@ export default function DashboardPage() {
             />
           </Card>
         </Col>
-        <Col span={12}>
+        <Col xs={24} md={12} lg={8}>
           <Card
-            title={
-              <span>
-                <span className="awm-section-icon">
-                  <EditOutlined />
-                </span>
-                دارایی‌های اخیراً ویرایش‌شده
-              </span>
-            }
+            title={<SectionTitle icon={<EditOutlined />}>دارایی‌های اخیراً ویرایش‌شده</SectionTitle>}
             size="small"
-            style={{ height: 260, overflow: 'auto' }}
+            style={{ height: '100%', minHeight: 260 }}
           >
             <AssetMiniList
               assets={recentlyModified}

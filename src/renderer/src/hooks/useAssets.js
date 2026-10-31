@@ -50,15 +50,46 @@ export function useAsset(id) {
   return asset
 }
 
-export function useDashboardStats() {
+// Dashboard: same data as useDashboardStats below, plus whether loading
+// failed and a retry — so a failed load shows an error with a retry
+// button instead of spinners that never stop.
+export function useDashboardData() {
   const [stats, setStats] = useState(null)
-  useEffect(() => {
+  const [failed, setFailed] = useState(false)
+
+  const reload = useCallback(() => {
+    setFailed(false)
     window.api.assets
       .dashboardStats()
       .then(setStats)
-      .catch(() => message.error('بارگذاری آمار داشبورد با خطا مواجه شد'))
+      .catch(() => {
+        setFailed(true)
+        message.error('بارگذاری آمار داشبورد با خطا مواجه شد')
+      })
   }, [])
-  return stats
+
+  useEffect(() => {
+    reload()
+  }, [reload])
+
+  return { stats, failed, reload }
+}
+
+export function useDashboardStats() {
+  return useDashboardData().stats
+}
+
+// Dashboard's data-quality panel (assetService.getDataQuality). null while
+// loading; { failed: true } if the request failed.
+export function useDataQuality() {
+  const [quality, setQuality] = useState(null)
+  useEffect(() => {
+    window.api.assets
+      .dataQuality()
+      .then(setQuality)
+      .catch(() => setQuality({ failed: true }))
+  }, [])
+  return quality
 }
 
 export function useAssetCountByWorkshop() {

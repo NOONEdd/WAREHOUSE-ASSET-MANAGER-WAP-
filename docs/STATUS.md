@@ -1,6 +1,6 @@
 # Project status
 
-Snapshot: **2026-10-30, Phase 1B-3 implemented and its independent review remediated in the working tree (O-16, O-17 approved): migrations 0005–0008, catalogue, persons, assets and the staged import (at most 5,000 rows per batch), imports disabled by default; system test 22/22 after two Phase 1B-1 defects it found were fixed; review finding NF-1 (database row values, a user's name and the start of a password hash, in error logs) remediated; sandbox performance measured at 1,000 / 10,000 / 50,000 assets (name search does not scale: O-20 proposed); READY FOR COMMIT REVIEW; everything uncommitted; PostgreSQL 17 validation and the target host pending**. Replace this file's contents at the end of each work session; history
+Snapshot: **2026-10-31, pre-deployment engineering and a desktop UI pass in the working tree (uncommitted)**. Server: NF-3, NF-4, NF-6 fixed; the database-failure contract (O-21: 503 with `Retry-After`, unknown commit outcome) and the name-search protection (O-20: stored search keys in migration 0009, a concurrent-search cap) implemented; the PostgreSQL logging policy (NF-2) with a checker; the erasure journal and `reapply-erasures` (R-2); server suite 538/538, system test 22/22, 63 of 64 seeded faults detected (the 64th an equivalent mutant), sandbox performance at 1,000 → 100,000 assets (slowest search p95 82 ms at 100,000). Desktop (owner's UI/UX authorization, O-UI): responsive layout, WCAG 2.1 AA contrast and labels (axe-core: no serious or critical findings on the audited pages), keyboard access and shortcuts, reduced motion, a data-quality panel, two defects fixed; desktop suite 558/558, browser end-to-end 15/15 in Chromium (not the Electron shell, not Windows). **PostgreSQL 17 not validated; target host not measured; desktop UI changes not released (D-15, O-25)**. Replace this file's contents at the end of each work session; history
 stays in Git.
 
 ## Where things are
@@ -23,9 +23,9 @@ verified, and are still kept.
 | Commit | Content |
 |---|---|
 | `4dfc246` (committed, not pushed) | O-06 disposition recorded in the decision register and STATUS, with the alignment of six documents |
-| working tree (uncommitted) | O-06/G-1 acceptance and O-15 recorded (2026-10-28); Phase 1B-3: match keys, the blank-never-erases rule, the approved asset-schema proposal (revision 2.2) with its draft DDL and guarded reverse, PD-01…PD-10, O-16; **the implementation**: migrations 0005–0007, request context, catalogue, person register, asset and import services and routes, their tests, an import measurement, documentation (2026-10-30); the review remediation (migration 0008, the O-17 batch limit, new tests) and two fixes found by the system test (`db/connection.ts`, `server.ts`, with tests) |
+| working tree (uncommitted) | O-06/G-1 acceptance and O-15 recorded (2026-10-28); Phase 1B-3: match keys, the blank-never-erases rule, the approved asset-schema proposal (revision 2.2) with its draft DDL and guarded reverse, PD-01…PD-10, O-16; **the implementation**: migrations 0005–0007, request context, catalogue, person register, asset and import services and routes, their tests, an import measurement, documentation (2026-10-30); the review remediation (migration 0008, the O-17 batch limit, new tests) and two fixes found by the system test (`db/connection.ts`, `server.ts`, with tests); **2026-10-30/31 engagement**: pre-deployment hardening and the desktop UI pass (O-UI), see below |
 
-Nothing was merged into `main`, tagged, released or deployed. No desktop file changed and no dependency was added. In `server/`: four migrations and the asset, catalogue, person and import modules and routes were added; existing files changed to register them (`app.ts`, migrations index, `permissions.ts`, `connection.ts` table types, `appError.ts` codes, `audit.ts` bulk insert, `config.ts`/`server.ts` for `WAM_IMPORT_ENABLED` and the daily retention run, the test harness, README) and for the two system-test fixes (`connection.ts`: an error listener on every pooled client; `server.ts`: request logs without query strings).
+Nothing was merged into `main`, tagged, released or deployed. No dependency was added. Desktop files changed only in the UI pass of 2026-10-31 (O-UI: renderer, plus a read-only `assets:dataQuality` channel and a `quality` list filter in the main process, both behind the existing sign-in check, and their tests); no desktop dependency, build or packaging file changed. In `server/`: four migrations and the asset, catalogue, person and import modules and routes were added; existing files changed to register them (`app.ts`, migrations index, `permissions.ts`, `connection.ts` table types, `appError.ts` codes, `audit.ts` bulk insert, `config.ts`/`server.ts` for `WAM_IMPORT_ENABLED` and the daily retention run, the test harness, README) and for the two system-test fixes (`connection.ts`: an error listener on every pooled client; `server.ts`: request logs without query strings).
 
 ## Phase 1B-3 gate — **passed; Phase 1B-3 authorized (O-15, 2026-10-28)**
 
@@ -77,6 +77,18 @@ real spreadsheet is authorized.**
 | **Performance (sandbox, 2026-10-30; not the target host)** | Real server process, 4 users, 1,000 → 10,000 → 50,000 assets. Lists, filters, details, history, catalogue, persons and writes stay flat (≤ 7 ms p50 at 50k; writes 9–11 ms, ~500/s at concurrency 8; 0 lost updates with 8 users editing one asset). **Name search and search counts scan the warehouse** (`wam.name_key` per asset, ~10 µs): a no-match search costs 0.5 s of database time at 50k, code-prefix searches 0.2 s; mixed-read throughput falls from ~618 to ~129 req/s; one user's 10 concurrent searches cut other users to 19 req/s (**O-20 proposed**; a stored key column measured 466 → 11 ms, with a trigram index 0.02–5 ms, on the disposable database only). A 5,000-row import at 50k: commit 8.6 s (creates) / 6.9 s (updates), with no lock waits for concurrent users; with durable settings 7.4 s |
 | **Import measurement (sandbox, indicative)** | 50,000 invented rows: commit **84 s** (creates) / **68 s** (updates) in one transaction; preview 7 s / 11 s; staging 5 s; retention of 100,000 rows 4 s (proposal §13.1). Two improvements made first (chunked staging and preview writes; one query for matched assets; chunked audit writes). The remaining cost is the approved one-statement-per-row protocol: **decision O-17 (proposed)** before imports are enabled |
 
+## Pre-deployment engineering and UI pass (2026-10-30/31)
+
+| Item | Result |
+|---|---|
+| **NF-3, NF-4, NF-6** | Blank names refused for users, warehouses, profiles and job titles (`admin/names.ts`); request logs without the `host` header; migrations take a `lock_timeout` (`WAM_MIGRATION_LOCK_TIMEOUT_MS`) with an operator hint on `55P03` |
+| **O-21 (database failures)** | `503 SERVICE_UNAVAILABLE` / `DATABASE_TIMEOUT` / `OUTCOME_UNKNOWN` with `Retry-After`; writes report `details.outcome`; a failed COMMIT always releases its connection (`db/transaction.ts`); six fault-injection tests (terminated connection, statement timeout, COMMIT in flight, refused COMMIT ×3, unreachable database, real deadlock) |
+| **O-20 (name search)** | Migration 0009 stores generated search keys; searches capped per user and in total (`429 SEARCH_BUSY`); worst-case search at 50,000 assets from p50 486 ms to 37 ms (sandbox) |
+| **NF-2, R-2, R-3** | `server/sql/check-logging-settings.sql` refuses unsafe PostgreSQL logging; id-only erasure journal and `npm run owner -- reapply-erasures --ids-file … --yes` after a restore (runbook §7); retention proposals O-22, O-23 |
+| **Desktop UI pass (O-UI)** | Layout adapts to desktop, tablet (icon rail) and phone (navigation drawer); skip link, `main` and `nav` landmarks, labelled filters, a keyboard-reachable user menu and asset links; shortcuts (`/`, `N`, `G` + letter, `?`) by physical key; antd animations off under the system's reduce-motion setting; contrast raised to WCAG AA (E-20); dashboard data-quality panel with matching list filter (E-21); selection summary for bulk actions; asset history as a timeline; Persian digits in totals |
+| **Desktop defects fixed** | The details page's "چاپ برچسب" button had no handler (did nothing); one click on the import page's "انتخاب فایل" opened the file dialog twice; a failed delete left the button spinning; the dashboard showed spinners forever when its statistics failed to load (now an error with a retry) |
+| **IPC authorization coverage** | `ipcAuthorization.test.js` now fails if any registered channel is neither tested for an anonymous call nor one of the five documented sign-in channels; four guarded but untested channels were added to it |
+
 ## Verification of this session (Linux sandbox; **nothing run on Windows or on company data, not the target host**)
 
 Earlier sessions' verification: this file at `4dfc246`.
@@ -89,8 +101,10 @@ Earlier sessions' verification: this file at `4dfc246`.
 | API and import tests | `assetApi.test.ts` 13/13, `importApi.test.ts` 18/18 (synthetic rows only), `server.test.ts` 6/6 (imports absent by default at the real entry path; retention runs at start-up; the process survives terminated connections) |
 | System test (real `node dist/main.js` over HTTP, migration and owner CLIs, disposable database; harness outside the repository) | **22/22** in its fourth run: environment, authentication, the eight business scenarios (administration, asset lifecycle, cross-warehouse isolation, person erasure, a 5,000-row import and a refused 5,001-row one, import without permission, inactive warehouse, edit conflict), authorization, catalogue, asset rules, sessions, audit, retention, database outage, statement timeout, a crash during a commit, log hygiene. The import flag was set only in throwaway server processes. Run 2 found two defects in Phase 1B-1 code, both fixed with regression tests: **the process exited when the database terminated a connection a request held**, and **request logs recorded query strings, with names searched for** |
 | Import measurement | `server/tests/perf/import.perf.test.ts` (`npm run test:perf`, not part of `npm test`): numbers above; sandbox only |
-| Desktop suite | **not run**: no desktop file changed |
-| Not tested | **PostgreSQL 17** (deployment target; its validation — full schema suite including Unicode equivalence and ICU collation, and the full server suite — is required before any deployment or production migration); commit and retention cost **on the target host** at E-18's maximum (required before operational imports); a parser, an upload route and the UI (not built) |
+| **Final run of this engagement (2026-10-31)** | Server on the delivered tree: typecheck exit 0, ESLint exit 0, build exit 0 (73 files), **538/538 in 35 files**; system test **22/22**; review checks **8/8**; seeded faults **63 of 64** detected in 8 groups (the undetected one, C5, writes only an empty value: an equivalent mutant); performance 1,000 → 100,000 assets passed (logs and tables in the engagement package) |
+| Desktop suite | **558/558 in 39 files** (533 before the UI pass; 25 new: shortcuts, data quality, saved filters, IPC coverage); `verify:env` and `electron-vite build` exit 0; total renderer JavaScript +0.9 % |
+| Browser end-to-end (desktop renderer) | **15/15**: the production renderer build in Chromium 1243 (Playwright 1.63) against the **real main-process IPC handlers** and a temporary SQLite database created by the real `connection.js`, synthetic data only; widths 1440/834/390, RTL, keyboard, shortcuts with a Persian-layout key event, reduced motion, axe-core 4.10.3 (WCAG 2.1 A/AA), console errors (none). Harness outside the repository. **Not** the Electron shell and **not** Windows |
+| Not tested | **PostgreSQL 17** (deployment target; its validation — full schema suite including Unicode equivalence and ICU collation, and the full server suite — is required before any deployment or production migration); commit and retention cost **on the target host** at E-18's maximum (required before operational imports); a parser, an upload route and the web UI (not built); the desktop renderer in the Electron shell and on Windows |
 | Scope | Working tree only; nothing committed or pushed; no dependency added; no real spreadsheet, production data, real asset record or the desktop test database used |
 
 ## Acceptance gates before any operational import (ExcelJS not approved for operational use until all pass)
@@ -129,17 +143,23 @@ Details: [`security/import-evaluation.md`](security/import-evaluation.md) §5.2 
    suite must pass on PostgreSQL 17 before any deployment or production migration.
 10. **Retention by hand:** the proposal also names a manual CLI run of the retention step; it is not built (the
     daily run catches up a missed day). Planned with the Phase 1D runbook.
-11. **Name search cost (O-20, proposed):** asset search and search counts evaluate the name key for every asset of the
-    warehouse; at 50,000 assets about 0.5 s of database time per search in the sandbox, and a few concurrent searches
-    from one user occupy the database pool. Decide O-20 before R1 at that volume.
-12. **Unavailability answers 500 (O-21, proposed):** a database outage or statement timeout gives a generic 500,
-    not a retryable 503.
-13. **PostgreSQL's own log (deployment):** with the default `log_error_verbosity` the database server logs a failing
-    row's values (`DETAIL: Failing row contains (…)`, verified on 16.15); set `log_error_verbosity = terse` before
-    deployment (README, Log privacy).
-14. **Blank names on older admin paths:** a whitespace-only warehouse, permission-profile or job-title name still
-    reaches the database check and answers 500 (Phase 1B-2 code; nothing sensitive is logged since NF-1). The same
-    normalized validation as for user display names belongs in Phase 1B-4.
+11. **Name search (O-20):** stored search keys (migration 0009) and a per-process cap on concurrent searches
+    (`429 SEARCH_BUSY`) are implemented; measured in the sandbox only. The cap is exact for one server process; with
+    several processes it must move into PostgreSQL. Target-host measurement and your latency targets are pending.
+12. **Database-failure contract (O-21):** implemented (503 with `Retry-After`, `OUTCOME_UNKNOWN` for a lost COMMIT,
+    same-key retries); awaiting your acknowledgment before the Phase 1C client relies on it.
+13. **PostgreSQL's own log (NF-2, deployment):** the policy and its checker (`server/sql/check-logging-settings.sql`)
+    exist and are tested on 16.15; the settings must be applied and checked on the production database. Residual:
+    PostgreSQL's primary message can quote an invalid input value (README, Log privacy).
+14. **Erasure after a restore (R-2):** `npm run owner -- reapply-erasures` replays the id-only erasure journal from the
+    server log; it only works if server logs are kept at least as long as backups (O-22, O-23) and
+    `WAM_LOG_LEVEL` stays at `info` or lower.
+15. **PostgreSQL 17 binaries** were fetched (npm `@embedded-postgres/linux-x64@17.11.0-beta.19`, integrity checked) but
+    this environment refused to run them; validation needs a PostgreSQL 17 machine or that permission.
+16. **Desktop UI pass not released:** D-15 requires the `xlsx@0.18.5` replacement before any new desktop release (O-25).
+17. **Desktop roles are labels (O-24):** the desktop main process checks only sign-in; any account can do everything.
+18. **Browser tests ran in Chromium, not in the Electron shell or on Windows;** print and save dialogs were
+    simulated. A Windows check of the packaged app belongs to the desktop release (O-25).
 
 None of this is production readiness: unit, integration and synthetic tests, audits and sandbox measurements do not
 replace the deployment gates (O-11, L-8, G-2…G-9, Phase 1E).
@@ -147,13 +167,14 @@ replace the deployment gates (O-11, L-8, G-2…G-9, Phase 1E).
 ## Owner actions
 
 1. **Next approvals:** (a) final code review of Phase 1B-3 in the working tree, then commit and push approvals;
-   (b) **authorize Phase 1C start** (login screen, session expiry, read-only asset list) — no web UI exists, so no
-   browser testing is possible until then; (c) D-06 (and D-03) before Phase 1B-5; (d) O-18, O-19, O-20 and O-21 (proposed);
+   (b) **authorize Phase 1C start** (login screen, session expiry, read-only asset list) — no web UI exists yet; the
+   browser tests of 2026-10-31 cover the desktop renderer only; (c) D-06 (and D-03) before Phase 1B-5; (d) O-18 and O-19 (proposed), acknowledgment of O-20 and O-21 (implemented 2026-10-30), O-22/O-23 (backup and log retention, proposed), O-24 (desktop roles), O-25 (desktop release carrying the UI pass) and O-27 (whether phones may connect from outside the company network; O-26, phones and PCs, is recorded as a Phase 1C requirement);
    (e) separately, whether to adopt the Excel Source Admission Gate (O-14, proposed), each of whose stages is then
    approved on its own. None of these authorizes a preview or an import of the real spreadsheet. The desktop
    app and its database stay as they are.
 2. **Commit and push approvals:** `4dfc246` is committed locally and not pushed; everything after it, including
-   the whole Phase 1B-3 implementation, is uncommitted in the working tree. Each needs your separate approval.
+   the whole Phase 1B-3 implementation, the NF-1 remediation and the 2026-10-30 pre-deployment hardening, is
+   uncommitted in the working tree, as is the desktop UI pass of 2026-10-31. Each needs your separate approval (suggested split: four commits — Phase 1B-3; NF-1; the 2026-10-30 hardening; the desktop UI pass).
 3. **Before any deployment or production migration:** a PostgreSQL 17 environment for the schema and server suites.
 4. **ExcelJS acceptance (later):** a few workbooks saved by Microsoft Excel on your PC (invented data only) through
    the harness (G-2); the target server for G-3…G-5 when it exists.

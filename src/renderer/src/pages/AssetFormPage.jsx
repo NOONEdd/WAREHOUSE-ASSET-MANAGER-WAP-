@@ -59,7 +59,7 @@ function EditableField({ field, lookups, currentValue }) {
   if (field.type === 'date') {
     return (
       <Form.Item label={field.label} name={field.key} rules={rules}>
-        <JalaliDatePicker />
+        <JalaliDatePicker ariaLabel={field.label} />
       </Form.Item>
     )
   }
@@ -184,9 +184,11 @@ export default function AssetFormPage() {
                   </span>
                 )}
               </div>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '0 16px' }}>
+              {/* Three columns where they fit (≈ 260px each), fewer on
+                  tablets and one on phones; wide fields span the row. */}
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(min(240px, 100%), 1fr))', gap: '0 16px' }}>
                 {group.fields.map((field) => (
-                  <div key={field.key} style={{ gridColumn: field.wide ? 'span 3' : 'span 1' }}>
+                  <div key={field.key} style={{ gridColumn: field.wide ? '1 / -1' : 'auto' }}>
                     {field.readOnly ? (
                       <ReadOnlyField field={field} existing={existing} />
                     ) : (

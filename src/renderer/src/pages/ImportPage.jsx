@@ -37,6 +37,7 @@ export default function ImportPage() {
   const patch = (fields) => setState((s) => ({ ...s, ...fields }))
 
   async function handlePickFile() {
+    if (state.loading) return // a pick or inspection is already running
     patch({ loading: true })
     const picked = await window.api.importData.pickFile()
     if (!picked.success) {
@@ -141,25 +142,12 @@ export default function ImportPage() {
         {state.step === 0 && (
           <div>
             {!state.fileName ? (
-              // Phase 10 — the whole panel is now a real click target (not
-              // just the button inside it), with keyboard support matching
-              // the app's other clickable-card pattern (Dashboard stat
-              // cards, recent-activity rows) — genuinely reads as "a place
-              // to drop/pick a file" rather than a box that happens to
-              // contain a button.
-              <div
-                className="awm-import-dropzone"
-                onClick={handlePickFile}
-                role="button"
-                tabIndex={0}
-                aria-label="انتخاب فایل برای درون‌ریزی"
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' || e.key === ' ') {
-                    e.preventDefault()
-                    handlePickFile()
-                  }
-                }}
-              >
+              // Phase 10 — the whole panel is a click target for the mouse.
+              // The button inside is the one control for keyboard and screen
+              // readers: the panel used to be a second role="button" around
+              // it (axe: nested-interactive), and a click on the button also
+              // reached the panel, so the file dialog opened twice.
+              <div className="awm-import-dropzone" onClick={handlePickFile}>
                 <div className="awm-import-icon-chip">
                   <UploadOutlined />
                 </div>
@@ -169,7 +157,14 @@ export default function ImportPage() {
                 <Text type="secondary" style={{ display: 'block', marginBottom: 18, fontSize: 12.5 }}>
                   فرمت‌های پشتیبانی‌شده: Excel (.xlsx / .xls)، CSV یا PDF
                 </Text>
-                <Button icon={<UploadOutlined />} onClick={handlePickFile} loading={state.loading}>
+                <Button
+                  icon={<UploadOutlined />}
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    handlePickFile()
+                  }}
+                  loading={state.loading}
+                >
                   انتخاب فایل
                 </Button>
               </div>

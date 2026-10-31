@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { Card, Table, Space, Select, Empty, Typography } from 'antd'
 import { FilterOutlined } from '@ant-design/icons'
 import { toJalaliDisplay } from '../utils/dateDisplay'
+import { formatPersianNumber } from '../utils/numberFormat'
 import JalaliDatePicker from '../components/common/JalaliDatePicker'
 import PageHeader from '../components/common/PageHeader'
 import { useAuditLog } from '../hooks/useAuditLog'
@@ -119,18 +120,19 @@ export default function AuditLogPage() {
           the same job) look like the same component. */}
       <div className="awm-toolbar" style={{ marginBottom: 12 }}>
         <Space wrap>
-          <FilterOutlined style={{ color: 'var(--awm-text-secondary)' }} />
+          <FilterOutlined aria-hidden style={{ color: 'var(--awm-text-secondary)' }} />
           <Select
             placeholder="نوع عملیات"
+            aria-label="فیلتر نوع عملیات"
             style={{ width: 150, background: 'var(--awm-surface)' }}
             allowClear
             value={actionFilter}
             onChange={setActionFilter}
             options={Object.entries(ACTION_LABELS).map(([value, label]) => ({ value, label }))}
           />
-          <Space size={4}>
-            از <JalaliDatePicker value={dateFrom} onChange={setDateFrom} /> تا{' '}
-            <JalaliDatePicker value={dateTo} onChange={setDateTo} />
+          <Space size={4} wrap>
+            از <JalaliDatePicker value={dateFrom} onChange={setDateFrom} ariaLabel="از تاریخ" /> تا{' '}
+            <JalaliDatePicker value={dateTo} onChange={setDateTo} ariaLabel="تا تاریخ" />
           </Space>
         </Space>
       </div>
@@ -147,11 +149,12 @@ export default function AuditLogPage() {
             loading={loading}
             columns={columns}
             dataSource={entries}
+            className="awm-table-scroll"
             pagination={{
               current: page,
               pageSize: PAGE_SIZE,
               total,
-              showTotal: (t) => `${t} رویداد`,
+              showTotal: (t) => `${formatPersianNumber(t)} رویداد`,
               onChange: setPage
             }}
           />
