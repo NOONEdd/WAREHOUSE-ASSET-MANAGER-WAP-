@@ -1346,16 +1346,20 @@ describe('migrations 0005–0007 are exactly the approved draft, with guarded do
   }, 120_000)
 
   it('refuse to revert once the schema holds data, and change nothing', async () => {
-    // The latest migration, 0008, guards stored responses linked to persons; this database has one.
+    // The latest guarded migration, 0008, guards stored responses linked to persons; this database has one.
+    // 0009 (derived search keys only) reverts freely first, and is applied again at the end.
     const { rows: persons } = await sql<{ id: string }>`SELECT id FROM wam.persons ORDER BY id LIMIT 1`.execute(h.ownerDb)
     const user = await insertUser(h, { username: 'synthetic.keyholder', password: null })
     await sql`INSERT INTO wam.idempotency_keys (user_id, key, fingerprint, subject_person_id)
               VALUES (${user}, ${randomUUID()}, ${randomBytes(32)}, ${persons[0]?.id})`.execute(h.ownerDb)
-    const { error } = await createMigrator(h.ownerDb).migrateDown()
+    const migrator = createMigrator(h.ownerDb)
+    expect((await migrator.migrateDown()).results?.map((r) => [r.migrationName, r.status])).toEqual([['0009_search_keys', 'Success']])
+    const { error } = await migrator.migrateDown()
     expect(error).toMatchObject(WRONG_STATE)
     const { rows } = await sql<{ n: string }>`
       SELECT count(*) AS n FROM wam.kysely_migration WHERE name IN ('0007_import_staging', '0008_idempotency_person_subjects')`.execute(h.ownerDb)
     expect(rows).toEqual([{ n: '2' }])
+    expect((await migrator.migrateToLatest()).error).toBeUndefined()
   })
 
   it.each([
@@ -1366,7 +1370,7 @@ describe('migrations 0005–0007 are exactly the approved draft, with guarded do
     const fresh = await createHarness()
     try {
       const migrator = createMigrator(fresh.ownerDb)
-      const order = ['0008_idempotency_person_subjects', '0007_import_staging', '0006_assets_and_history', '0005_asset_catalogue']
+      const order = ['0009_search_keys', '0008_idempotency_person_subjects', '0007_import_staging', '0006_assets_and_history', '0005_asset_catalogue']
       for (let i = 0; i < order.indexOf(name); i += 1) expect((await migrator.migrateDown()).error).toBeUndefined()
       const user = await insertUser(fresh, { username: 'guard.actor', password: null })
       const warehouse = await insertWarehouse(fresh, 'SYN-GUARD')
@@ -1393,7 +1397,7 @@ describe('migrations 0005–0007 are exactly the approved draft, with guarded do
     const fresh = await createHarness()
     try {
       const migrator = createMigrator(fresh.ownerDb)
-      for (const name of ['0008_idempotency_person_subjects', '0007_import_staging', '0006_assets_and_history', '0005_asset_catalogue']) {
+      for (const name of ['0009_search_keys', '0008_idempotency_person_subjects', '0007_import_staging', '0006_assets_and_history', '0005_asset_catalogue']) {
         const { error, results } = await migrator.migrateDown()
         expect(error).toBeUndefined()
         expect(results?.map((r) => [r.migrationName, r.status])).toEqual([[name, 'Success']])
@@ -1447,7 +1451,7 @@ describe('migrations 0005–0007 are exactly the approved draft, with guarded do
   /** A fresh, unused database reverted down to (and including the reversal of) the migrations after `name`. */
   async function raceSetup(name = '0007_import_staging'): Promise<{ fresh: Harness; user: number; warehouse: number }> {
     const fresh = await createHarness()
-    const order = ['0008_idempotency_person_subjects', '0007_import_staging', '0006_assets_and_history', '0005_asset_catalogue']
+    const order = ['0009_search_keys', '0008_idempotency_person_subjects', '0007_import_staging', '0006_assets_and_history', '0005_asset_catalogue']
     for (let i = 0; i < order.indexOf(name); i += 1) expect((await createMigrator(fresh.ownerDb).migrateDown()).error).toBeUndefined()
     return { fresh, user: await insertUser(fresh, { username: 'race.actor', password: null }), warehouse: await insertWarehouse(fresh, 'SYN-RACE') }
   }

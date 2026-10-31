@@ -126,7 +126,7 @@ function whereClause(warehouseId: number, filter: AssetFilter): RawBuilder<unkno
     conditions.push(sql`(
       (wam.match_key(${q}) <> '' AND (starts_with(asset_code_key, wam.match_key(${q}))
                                       OR starts_with(serial_number_key, wam.match_key(${q}))))
-      OR strpos(wam.name_key(name), wam.name_key(${q})) > 0)`)
+      OR strpos(name_key, wam.name_key(${q})) > 0)`)
   }
   return sql.join(conditions, sql` AND `)
 }

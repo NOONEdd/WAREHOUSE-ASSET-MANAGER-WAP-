@@ -41,7 +41,7 @@ export async function listPersons(trx: Kysely<Database>, warehouseId: number, fi
     SELECT id, display_name, erased_at, version FROM wam.persons
      WHERE warehouse_id = ${warehouseId}
        AND id > ${filter.after ?? 0}
-       AND (${q} = '' OR strpos(wam.name_key(display_name), wam.name_key(${q})) > 0)
+       AND (${q} = '' OR strpos(display_name_key, wam.name_key(${q})) > 0)
      ORDER BY id
      LIMIT ${filter.limit}`.execute(trx)
   return rows.map(toPerson)

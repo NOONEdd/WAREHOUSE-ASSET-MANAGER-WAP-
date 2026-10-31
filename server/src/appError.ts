@@ -31,7 +31,14 @@ const DEFINITIONS = {
   IMPORT_TOO_LARGE: [422, 'An import batch may contain at most 5,000 non-empty data rows; split larger files into separate batches, each previewed and committed on its own'],
   IDEMPOTENCY_KEY_REUSED: [422, 'This Idempotency-Key was already used for a different request'],
   MFA_LOCKED: [423, 'Too many incorrect verification codes; ask an administrator to reset your sign-in'],
-  TOO_MANY_REQUESTS: [429, 'Too many attempts; try again later']
+  TOO_MANY_REQUESTS: [429, 'Too many attempts; try again later'],
+  SEARCH_BUSY: [429, 'Too many searches are running at once; try again in a moment'],
+  SERVICE_UNAVAILABLE: [503, 'The service is temporarily unavailable; try again shortly'],
+  DATABASE_TIMEOUT: [503, 'The request took too long and was stopped; try again shortly'],
+  OUTCOME_UNKNOWN: [
+    503,
+    'The connection to the database was lost while the change was being saved, so it may or may not have been applied; repeat the request with the same Idempotency-Key to find out'
+  ]
 } as const satisfies Record<string, readonly [number, string]>
 
 export type AppErrorCode = keyof typeof DEFINITIONS

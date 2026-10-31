@@ -1,3 +1,7 @@
+import { randomBytes, randomUUID } from 'node:crypto'
+import { mkdtempSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { sql } from 'kysely'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { MFA_MAX_FAILED_ATTEMPTS } from '../../src/auth/mfa.js'
@@ -12,6 +16,7 @@ import {
   GOOD_PASSWORD,
   insertProfile,
   insertUser,
+  insertWarehouse,
   login,
   totpFor,
   type Harness
@@ -231,5 +236,63 @@ describe('end-all-sessions and status', () => {
 
   it.each([[[]], [['frobnicate']], [['bootstrap', '--username', 'x']], [['status', '--yes', '--to']]])('rejects the usage %j', async (args) => {
     expect((await owner(args)).code).toBe(2)
+  })
+})
+
+describe('reapply-erasures after restoring a backup (review recommendation R-2)', () => {
+  it('erases every listed person the database still holds unerased, tombstones their stored responses, audits counts, and is idempotent', async () => {
+    const ownerId = (await h.ownerDb.selectFrom('users').select('id').where('is_owner', '=', true).executeTakeFirstOrThrow()).id
+    const warehouse = await insertWarehouse(h, 'SYN-RESTORE')
+    // The "restored" state: three persons, one of them already erased, and a stored response that holds a name.
+    const ids = await h.ownerDb.transaction().execute(async (trx) => {
+      await sql`SELECT set_config('wam.warehouse_scope', ${String(warehouse)}, true), set_config('wam.actor_user_id', ${String(ownerId)}, true)`.execute(trx)
+      const made: string[] = []
+      for (const name of ['Synthetic Restored One', 'Synthetic Restored Two', 'Synthetic Restored Three']) {
+        made.push((await sql<{ id: string }>`INSERT INTO wam.persons (warehouse_id, display_name) VALUES (${warehouse}, ${name}) RETURNING id::text AS id`.execute(trx)).rows[0]?.id ?? '')
+      }
+      await sql`UPDATE wam.persons SET display_name = NULL, erased_at = now() WHERE id = ${made[1]}`.execute(trx)
+      return made
+    })
+    const keyholder = await insertUser(h, { username: 'restore.keyholder', password: null })
+    const key = randomUUID()
+    await sql`INSERT INTO wam.idempotency_keys (user_id, key, fingerprint, status_code, response_body, subject_person_id)
+              VALUES (${keyholder}, ${key}::uuid, ${randomBytes(32)}, 201, ${JSON.stringify({ id: Number(ids[0]), displayName: 'Synthetic Restored One' })}, ${ids[0]})`.execute(h.ownerDb)
+
+    const dir = mkdtempSync(join(tmpdir(), 'wam-erasures-'))
+    const file = join(dir, 'erased-ids.txt')
+    writeFileSync(file, `# from the server log, person.erased lines newer than the backup\n${String(ids[0])}\n${String(ids[1])}\n\n${String(ids[0])}\n987654321\n`)
+
+    expect((await owner(['reapply-erasures', '--ids-file', file])).code).toBe(2) // --yes is required
+    const first = await owner(['reapply-erasures', '--ids-file', file, '--yes'])
+    expect(first).toMatchObject({ code: 0 })
+    expect(first.out).toContain('1 person(s) erased again; 1 already erased; 1 not in this database')
+    const rows = await sql<{ id: string; display_name: string | null; key: string | null; erased: boolean }>`
+      SELECT id::text AS id, display_name, display_name_key AS key, erased_at IS NOT NULL AS erased FROM wam.persons WHERE id = ANY (${ids}::bigint[]) ORDER BY id`.execute(h.ownerDb)
+    expect(rows.rows.map((r) => [r.display_name, r.key, r.erased])).toEqual([
+      [null, null, true],
+      [null, null, true],
+      ['Synthetic Restored Three', 'synthetic restored three', false]
+    ])
+    const stored = await sql<{ body: string }>`SELECT response_body::text AS body FROM wam.idempotency_keys WHERE key = ${key}::uuid`.execute(h.ownerDb)
+    expect(stored.rows[0]?.body).not.toContain('Synthetic')
+    const audit = await auditRows(h, 'person.erasure_reapplied')
+    expect(audit.at(-1)?.details).toMatchObject({ via: 'owner-cli', requested: 3, erased: 1, alreadyErased: 1, notFound: 1 })
+    expect(JSON.stringify(audit)).not.toContain('Synthetic')
+
+    const again = await owner(['reapply-erasures', '--ids-file', file, '--yes'])
+    expect(again.out).toContain('0 person(s) erased again; 2 already erased; 1 not in this database')
+  })
+
+  it('refuses a file that is not a list of person ids, and changes nothing', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'wam-erasures-'))
+    const file = join(dir, 'bad.txt')
+    writeFileSync(file, '12\nSynthetic Name\n-4\n')
+    const before = await auditRows(h, 'person.erasure_reapplied')
+    const res = await owner(['reapply-erasures', '--ids-file', file, '--yes'])
+    expect(res.code).toBe(2)
+    expect(res.err).toContain('lines 2, 3 are not person ids')
+    expect(res.err).not.toContain('Synthetic')
+    expect(await auditRows(h, 'person.erasure_reapplied')).toEqual(before)
+    expect((await owner(['reapply-erasures', '--ids-file', join(dir, 'missing.txt'), '--yes'])).code).toBe(2)
   })
 })

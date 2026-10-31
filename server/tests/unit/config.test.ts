@@ -29,8 +29,22 @@ describe('loadConfig', () => {
       sessions: { idleMinutes: 30, absoluteHours: 12 },
       mfaEncryptionKey: MFA_KEY_BYTES,
       logLevel: 'info',
-      importEnabled: false
+      importEnabled: false,
+      search: { perUser: 2, total: 5 }
     })
+  })
+
+  it('limits name searches to half the pool by default, and refuses limits that could take the whole pool (O-20)', () => {
+    const base = { WAM_ENV: 'test', WAM_DATABASE_URL: URL_WITH_PASSWORD, WAM_PUBLIC_ORIGIN: ORIGIN, WAM_MFA_ENCRYPTION_KEY: MFA_KEY }
+    expect(loadConfig({ ...base, WAM_DB_POOL_MAX: '4' }).search).toEqual({ perUser: 2, total: 2 })
+    expect(loadConfig({ ...base, WAM_DB_POOL_MAX: '1' }).search).toEqual({ perUser: 1, total: 1 })
+    expect(loadConfig({ ...base, WAM_SEARCH_MAX_PER_USER: '3', WAM_SEARCH_MAX_TOTAL: '6' }).search).toEqual({ perUser: 3, total: 6 })
+    expect(problemsOf(() => loadConfig({ ...base, WAM_SEARCH_MAX_TOTAL: '10' }))).toEqual([
+      'WAM_SEARCH_MAX_TOTAL must be smaller than WAM_DB_POOL_MAX, so ordinary requests always find a connection'
+    ])
+    expect(problemsOf(() => loadConfig({ ...base, WAM_SEARCH_MAX_PER_USER: '4', WAM_SEARCH_MAX_TOTAL: '3' }))).toEqual([
+      'WAM_SEARCH_MAX_PER_USER must not exceed WAM_SEARCH_MAX_TOTAL'
+    ])
   })
 
   it('reads every optional setting', () => {
@@ -161,9 +175,16 @@ describe('loadMigrationConfig', () => {
     ])
   })
 
-  it('uses one connection and no statement timeout', () => {
+  it('uses one connection, no statement timeout, and a bounded lock wait (10 s unless set)', () => {
     const config = loadMigrationConfig({ WAM_ENV: 'test', WAM_MIGRATION_DATABASE_URL: URL_WITH_PASSWORD })
-    expect(config.database).toEqual({ connectionString: URL_WITH_PASSWORD, poolMax: 1, statementTimeoutMs: 0 })
+    expect(config.database).toEqual({ connectionString: URL_WITH_PASSWORD, poolMax: 1, statementTimeoutMs: 0, lockTimeoutMs: 10_000 })
+    const custom = loadMigrationConfig({ WAM_ENV: 'test', WAM_MIGRATION_DATABASE_URL: URL_WITH_PASSWORD, WAM_MIGRATION_LOCK_TIMEOUT_MS: '2500' })
+    expect(custom.database.lockTimeoutMs).toBe(2_500)
+    for (const bad of ['0', '-1', '600001', 'soon']) {
+      expect(problemsOf(() => loadMigrationConfig({ WAM_ENV: 'test', WAM_MIGRATION_DATABASE_URL: URL_WITH_PASSWORD, WAM_MIGRATION_LOCK_TIMEOUT_MS: bad }))).toEqual([
+        expect.stringMatching(/^WAM_MIGRATION_LOCK_TIMEOUT_MS must be a whole number from 100 to 600000/)
+      ])
+    }
   })
 })
 

@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs'
 import { userInfo } from 'node:os'
 import { sql, type Kysely } from 'kysely'
 import { recordAudit, type AuditContext } from '../audit/audit.js'
@@ -25,13 +26,16 @@ import type { CliIo } from './migrate.js'
 //                                                  clears lockouts; --reset-mfa also removes the authenticator
 //   transfer --to U --yes                          makes user U the owner
 //   end-all-sessions --yes                         signs everyone out (incident response)
+//   reapply-erasures --ids-file F --yes            after restoring a backup: erases again every person id in F
+//                                                  (one per line, from the server log's person.erased lines)
 
 export const OWNER_USAGE = [
   'usage: npm run owner -- status',
   '       npm run owner -- bootstrap --username <name> --display-name "<full name>"',
   '       npm run owner -- recover [--reset-mfa] --yes',
   '       npm run owner -- transfer --to <username> --yes',
-  '       npm run owner -- end-all-sessions --yes'
+  '       npm run owner -- end-all-sessions --yes',
+  '       npm run owner -- reapply-erasures --ids-file <file> --yes'
 ].join('\n')
 
 interface Parsed {
@@ -41,7 +45,7 @@ interface Parsed {
   readonly switches: ReadonlySet<string>
 }
 
-const VALUE_FLAGS = new Set(['--username', '--display-name', '--to'])
+const VALUE_FLAGS = new Set(['--username', '--display-name', '--to', '--ids-file'])
 const SWITCHES = new Set(['--reset-mfa'])
 
 function parse(args: readonly string[]): Parsed | null {
@@ -69,7 +73,8 @@ const EXPECTED: Readonly<
   bootstrap: { values: ['--username', '--display-name'], yes: false },
   recover: { values: [], yes: true, switches: ['--reset-mfa'] },
   transfer: { values: ['--to'], yes: true },
-  'end-all-sessions': { values: [], yes: true }
+  'end-all-sessions': { values: [], yes: true },
+  'reapply-erasures': { values: ['--ids-file'], yes: true }
 }
 
 function osUser(): string {
@@ -145,6 +150,8 @@ export async function runOwnerCli(args: readonly string[], env: Env, io: CliIo):
         return await recover(db, io, parsed.switches.has('--reset-mfa'))
       case 'transfer':
         return await transfer(db, io, parsed.values.get('--to') ?? '')
+      case 'reapply-erasures':
+        return await reapplyErasures(db, io, parsed.values.get('--ids-file') ?? '')
       default:
         return await endAllSessions(db, io)
     }
@@ -337,6 +344,58 @@ async function endAllSessions(db: Kysely<Database>, io: CliIo): Promise<number> 
       details: { via: 'owner-cli', osUser: osUser(), ended }
     })
     io.out(`${String(ended)} session(s) ended. Everyone must sign in again.`)
+    return 0
+  })
+}
+
+/**
+ * Review recommendation R-2: a restored backup brings back the names of persons erased after it was taken.
+ * The server writes one id-only `person.erased` line per erasure to its log, which lives outside the database;
+ * after a restore, and before the server is started again, the operator extracts those ids and runs this
+ * command. It erases every listed person that the restored database still holds unerased (which also
+ * tombstones their stored responses, migration 0008), as the owner, in one transaction, and records one audit
+ * event with the counts. Ids already erased, or unknown to the restored database, are counted and skipped, so
+ * running it twice changes nothing.
+ */
+async function reapplyErasures(db: Kysely<Database>, io: CliIo, path: string): Promise<number> {
+  let text: string
+  try {
+    text = readFileSync(path, 'utf8')
+  } catch {
+    io.err('Refusing: the ids file cannot be read.')
+    return 2
+  }
+  const lines = text.split(/\r?\n/).map((l) => l.trim())
+  const bad = lines.flatMap((l, i) => (l === '' || l.startsWith('#') || /^[1-9][0-9]{0,17}$/.test(l) ? [] : [i + 1]))
+  if (bad.length > 0) {
+    io.err(`Refusing: lines ${bad.slice(0, 10).join(', ')}${bad.length > 10 ? ', …' : ''} are not person ids (one positive integer per line).`)
+    return 2
+  }
+  const ids = [...new Set(lines.filter((l) => l !== '' && !l.startsWith('#')))]
+  const owner = await db.selectFrom('users').select('id').where('is_owner', '=', true).executeTakeFirst()
+  if (owner === undefined) {
+    io.err('Refusing: there is no owner account to act as.')
+    return 1
+  }
+  return db.transaction().execute(async (trx) => {
+    const { rows } = await sql<{ id: string; erased: boolean }>`
+      SELECT id::text AS id, erased_at IS NOT NULL AS erased FROM wam.persons WHERE id = ANY (${ids}::bigint[]) ORDER BY id FOR UPDATE`.execute(trx)
+    const pending = rows.filter((r) => !r.erased).map((r) => r.id)
+    await sql`SELECT set_config('wam.actor_user_id', ${String(owner.id)}, true)`.execute(trx)
+    if (pending.length > 0) {
+      await sql`UPDATE wam.persons SET display_name = NULL, erased_at = now() WHERE id = ANY (${pending}::bigint[])`.execute(trx)
+    }
+    const counts = { requested: ids.length, erased: pending.length, alreadyErased: rows.length - pending.length, notFound: ids.length - rows.length }
+    await recordAudit(trx, CLI_CONTEXT, {
+      action: 'person.erasure_reapplied',
+      outcome: 'success',
+      actor: null,
+      details: { via: 'owner-cli', osUser: osUser(), ...counts }
+    })
+    io.out(
+      `${String(counts.erased)} person(s) erased again; ${String(counts.alreadyErased)} already erased; ` +
+        `${String(counts.notFound)} not in this database (created after the backup, nothing to do).`
+    )
     return 0
   })
 }

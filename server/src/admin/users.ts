@@ -1,5 +1,6 @@
 import { sql, type Kysely } from 'kysely'
 import { AppError } from '../appError.js'
+import { requiredName } from './names.js'
 import { recordAudit, type AuditContext } from '../audit/audit.js'
 import { deleteUserLoginChallenges } from '../auth/loginChallenges.js'
 import { removeMfa } from '../auth/mfa.js'
@@ -173,24 +174,13 @@ async function assertJobTitleUsable(trx: Kysely<Database>, jobTitleId: number | 
   if (row?.is_active !== true) throw new AppError('VALIDATION_FAILED', { field: 'jobTitleId', reason: 'unknown or inactive job title' })
 }
 
-/**
- * A display name as stored: trimmed. The route schema bounds the raw length only, so a name of whitespace alone
- * would reach the database empty and be refused there by users_display_name_length — as an unexpected error,
- * not a validation error (finding NF-1). It is refused here instead; the constraint stays as the second layer.
- */
-function normalizedDisplayName(raw: string): string {
-  const name = raw.trim()
-  if (name === '') throw new AppError('VALIDATION_FAILED', { field: 'displayName', reason: 'blank' })
-  return name
-}
-
 export async function createUser(
   trx: Kysely<Database>,
   context: AuditContext,
   actor: Actor,
   input: { readonly username: string; readonly displayName: string; readonly jobTitleId: number | null }
 ): Promise<UserDetail> {
-  const displayName = normalizedDisplayName(input.displayName)
+  const displayName = requiredName(input.displayName, 'displayName')
   const username = input.username.trim().toLowerCase()
   const problem = checkUsername(username)
   if (problem !== null) throw new AppError('VALIDATION_FAILED', { field: 'username', reason: problem })
@@ -229,7 +219,7 @@ export async function updateUser(
     readonly status?: 'active' | 'disabled' | undefined
   }
 ): Promise<UserDetail> {
-  const displayName = input.displayName === undefined ? undefined : normalizedDisplayName(input.displayName)
+  const displayName = input.displayName === undefined ? undefined : requiredName(input.displayName, 'displayName')
   const target = await lockManagedUser(trx, actor, id, input.version)
   const before = { displayName: target.display_name, jobTitleId: target.job_title_id, status: target.status }
   const after = {

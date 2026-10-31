@@ -3,6 +3,8 @@ import type { FastifyReply, FastifyRequest } from 'fastify'
 import type { Kysely, Transaction } from 'kysely'
 import { AppError } from '../appError.js'
 import type { Database } from '../db/connection.js'
+import { databaseFailureKind, WriteFailure } from '../db/failures.js'
+import { CommitOutcomeUnknownError, inTransaction } from '../db/transaction.js'
 import { authOf } from './authorization.js'
 
 // Retry safety for the online-only application (decision D-05;
@@ -69,7 +71,7 @@ export async function sendIdempotent<T>(
   const userId = authOf(request).session.userId
   const fingerprint = requestFingerprint(request)
 
-  const outcome = await db.transaction().execute(async (trx) => {
+  const outcome = await inTransaction(db, async (trx) => {
     const inserted = await trx
       .insertInto('idempotency_keys')
       .values({ user_id: userId, key, fingerprint })
@@ -99,6 +101,12 @@ export async function sendIdempotent<T>(
       .where('key', '=', key)
       .execute()
     return { ...result, replayed: false }
+  }).catch((err: unknown) => {
+    // Decision O-21: tell the client what is known about the write. Anything else (an AppError, a bug) rolled
+    // back and is answered as before.
+    if (err instanceof CommitOutcomeUnknownError) throw new WriteFailure('unknown', err.cause)
+    if (databaseFailureKind(err) !== null) throw new WriteFailure('not_applied', err)
+    throw err
   })
   return reply.header('idempotency-replayed', String(outcome.replayed)).status(outcome.status).send(outcome.body)
 }

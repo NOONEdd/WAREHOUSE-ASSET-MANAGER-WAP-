@@ -1,5 +1,6 @@
 import type { FastifyError, FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
-import { AppError } from '../appError.js'
+import { AppError, type AppErrorCode } from '../appError.js'
+import { databaseFailureKind, WriteFailure } from '../db/failures.js'
 import { safeErrorSummary } from '../logPrivacy.js'
 
 // One error shape for every failed request:
@@ -9,6 +10,12 @@ import { safeErrorSummary } from '../logPrivacy.js'
 // internal error message, which can contain SQL, file paths or data. The
 // error is logged server-side under the same requestId, as its allowlisted
 // summary only (finding NF-1: a database error's detail holds row values).
+//
+// Database failures (decision O-21 as recommended): an unreachable database or a dropped connection answers
+// 503 SERVICE_UNAVAILABLE, a cancelled statement 503 DATABASE_TIMEOUT, a write whose COMMIT was in flight when
+// the connection broke 503 OUTCOME_UNKNOWN, each with Retry-After. For a write (an Idempotency-Key request)
+// `details.outcome` says what is known: `not_applied` or `unknown`; the client repeats the request with the same
+// Idempotency-Key either way, which returns the stored response if it was applied and applies it once if not.
 
 export interface ErrorBody {
   readonly error: {
@@ -41,11 +48,41 @@ export function errorBody(
   return { error: details === undefined ? { code, message, requestId } : { code, message, requestId, details } }
 }
 
+/** Seconds a client should wait before repeating a request refused with these codes. */
+const RETRY_AFTER_SECONDS: Partial<Record<AppErrorCode, number>> = {
+  SEARCH_BUSY: 1,
+  SERVICE_UNAVAILABLE: 5,
+  DATABASE_TIMEOUT: 2,
+  OUTCOME_UNKNOWN: 2
+}
+
+/** The 503 a database failure answers, or null when the error is not one. */
+export function databaseFailureError(error: unknown): AppError | null {
+  const failure = error instanceof WriteFailure ? error.failure : error
+  const kind = databaseFailureKind(failure)
+  if (error instanceof WriteFailure && error.outcome === 'unknown') return new AppError('OUTCOME_UNKNOWN', { outcome: 'unknown' })
+  if (kind === null) return null
+  const details = error instanceof WriteFailure ? { outcome: error.outcome } : undefined
+  return new AppError(kind === 'timeout' ? 'DATABASE_TIMEOUT' : 'SERVICE_UNAVAILABLE', details)
+}
+
+function sendAppError(reply: FastifyReply, request: FastifyRequest, error: AppError): FastifyReply {
+  const retryAfter = RETRY_AFTER_SECONDS[error.code]
+  if (retryAfter !== undefined) void reply.header('retry-after', String(retryAfter))
+  return reply.status(error.status).send(errorBody(error.code, error.message, request.id, error.details))
+}
+
 export function registerErrorHandling(app: FastifyInstance): void {
   app.setErrorHandler((error: FastifyError, request: FastifyRequest, reply: FastifyReply) => {
     if (error instanceof AppError) {
       request.log.info({ code: error.code }, 'request rejected')
-      return reply.status(error.status).send(errorBody(error.code, error.message, request.id, error.details))
+      return sendAppError(reply, request, error)
+    }
+    const unavailable = databaseFailureError(error)
+    if (unavailable !== null) {
+      const cause = error instanceof WriteFailure ? error.failure : error
+      request.log.error({ err: safeErrorSummary(cause), code: unavailable.code, route: request.routeOptions.url ?? null }, 'request failed: database')
+      return sendAppError(reply, request, unavailable)
     }
     const status = typeof error.statusCode === 'number' && error.statusCode >= 400 && error.statusCode < 600 ? error.statusCode : 500
     if (status >= 500) {

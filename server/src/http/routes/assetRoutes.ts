@@ -17,6 +17,7 @@ import type { Database } from '../../db/connection.js'
 import { inDataContext, setDataContext, type DataContext } from '../../db/dataContext.js'
 import { authOf, routeIntegerParam } from '../authorization.js'
 import { sendIdempotent } from '../idempotency.js'
+import type { SearchLimiter } from '../searchLimiter.js'
 import { auditContext } from '../requestContext.js'
 import { positiveId, version } from './schemas.js'
 
@@ -154,8 +155,8 @@ export function warehouseContext(request: FastifyRequest, warehouseId: number): 
   return { warehouseIds: [warehouseId], actorUserId: authOf(request).session.userId, requestId: request.id }
 }
 
-export function registerAssetRoutes(app: FastifyInstance, options: { readonly db: Kysely<Database> }): void {
-  const { db } = options
+export function registerAssetRoutes(app: FastifyInstance, options: { readonly db: Kysely<Database>; readonly searches: SearchLimiter }): void {
+  const { db, searches } = options
   const base = '/api/warehouses/:warehouseId'
 
   // --- assets ---------------------------------------------------------------------------------------
@@ -183,8 +184,8 @@ export function registerAssetRoutes(app: FastifyInstance, options: { readonly db
     (request) => {
       const warehouseId = param(request, 'warehouseId')
       const query = request.query as FilterQuery
-      return inDataContext(db, warehouseContext(request, warehouseId), (trx) =>
-        listAssets(trx, warehouseId, { ...query, limit: query.limit ?? 50 })
+      return searches.run(authOf(request).session.userId, query.q, () =>
+        inDataContext(db, warehouseContext(request, warehouseId), (trx) => listAssets(trx, warehouseId, { ...query, limit: query.limit ?? 50 }))
       )
     }
   )
@@ -201,8 +202,9 @@ export function registerAssetRoutes(app: FastifyInstance, options: { readonly db
     },
     async (request) => {
       const warehouseId = param(request, 'warehouseId')
-      const count = await inDataContext(db, warehouseContext(request, warehouseId), (trx) =>
-        countAssets(trx, warehouseId, request.query as FilterQuery)
+      const query = request.query as FilterQuery
+      const count = await searches.run(authOf(request).session.userId, query.q, () =>
+        inDataContext(db, warehouseContext(request, warehouseId), (trx) => countAssets(trx, warehouseId, query))
       )
       return { count }
     }
@@ -381,8 +383,8 @@ export function registerAssetRoutes(app: FastifyInstance, options: { readonly db
     async (request) => {
       const warehouseId = param(request, 'warehouseId')
       const query = request.query as { q?: string; after?: number; limit?: number }
-      const persons = await inDataContext(db, warehouseContext(request, warehouseId), (trx) =>
-        listPersons(trx, warehouseId, { ...query, limit: query.limit ?? 50 })
+      const persons = await searches.run(authOf(request).session.userId, query.q, () =>
+        inDataContext(db, warehouseContext(request, warehouseId), (trx) => listPersons(trx, warehouseId, { ...query, limit: query.limit ?? 50 }))
       )
       return { persons }
     }
@@ -450,12 +452,18 @@ export function registerAssetRoutes(app: FastifyInstance, options: { readonly db
         response: { 200: personSchema }
       }
     },
-    (request, reply) =>
-      sendIdempotent(db, request, reply, async (trx) => {
+    async (request, reply) => {
+      const sent = await sendIdempotent(db, request, reply, async (trx) => {
         const warehouseId = param(request, 'warehouseId')
         await setDataContext(trx, warehouseContext(request, warehouseId))
         const body = request.body as { version: number }
         return { status: 200, body: await erasePerson(trx, auditContext(request), actorFrom(request), warehouseId, param(request, 'personId'), body) }
       })
+      // Erasure journal (review recommendation R-2): one id-only line per committed erasure, outside the
+      // database, so that a restore of an older backup can be followed by re-erasing these ids
+      // (`npm run owner -- reapply-erasures`). Ids are not personal data; the name is never logged.
+      if (reply.statusCode === 200) request.log.info({ event: 'person.erased', personId: param(request, 'personId') }, 'person erased')
+      return sent
+    }
   )
 }

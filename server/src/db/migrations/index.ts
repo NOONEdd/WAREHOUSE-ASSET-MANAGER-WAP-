@@ -7,6 +7,7 @@ import * as assetCatalogue from './0005_asset_catalogue.js'
 import * as assetsAndHistory from './0006_assets_and_history.js'
 import * as importStaging from './0007_import_staging.js'
 import * as idempotencyPersonSubjects from './0008_idempotency_person_subjects.js'
+import * as searchKeys from './0009_search_keys.js'
 
 /**
  * Every schema migration, keyed by name; applied in name order.
@@ -24,5 +25,6 @@ export const migrations: Readonly<Record<string, Migration>> = {
   '0005_asset_catalogue': assetCatalogue,
   '0006_assets_and_history': assetsAndHistory,
   '0007_import_staging': importStaging,
-  '0008_idempotency_person_subjects': idempotencyPersonSubjects
+  '0008_idempotency_person_subjects': idempotencyPersonSubjects,
+  '0009_search_keys': searchKeys
 }

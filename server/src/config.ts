@@ -14,6 +14,11 @@ export interface DatabaseConfig {
   readonly poolMax: number
   /** 0 disables the timeout (used only by the migration CLI). */
   readonly statementTimeoutMs: number
+  /**
+   * How long one statement may wait for a lock before it fails (PostgreSQL lock_timeout). Set only for the
+   * migration CLI (finding NF-6); the server's statements are bounded by the statement timeout.
+   */
+  readonly lockTimeoutMs?: number
 }
 
 export interface SessionConfig {
@@ -45,6 +50,8 @@ export interface AppConfig {
    * to stay off until gates G-2…G-9 pass and O-14 admits real spreadsheets.
    */
   readonly importEnabled: boolean
+  /** Name searches running at once (decision O-20; src/http/searchLimiter.ts). */
+  readonly search: { readonly perUser: number; readonly total: number }
 }
 
 export interface MigrationConfig {
@@ -85,6 +92,13 @@ export function loadConfig(env: Env): AppConfig {
   const absoluteHours = readInteger(env, 'WAM_SESSION_ABSOLUTE_HOURS', 12, 1, 24, problems)
   const mfaEncryptionKey = readKey(env, 'WAM_MFA_ENCRYPTION_KEY', problems)
   const importEnabled = readEnum(env, 'WAM_IMPORT_ENABLED', SWITCH, 'false', problems) === 'true'
+  // Searches may use at most half the pool (5 of the default 10), so ordinary requests always find a connection.
+  const searchTotal = readInteger(env, 'WAM_SEARCH_MAX_TOTAL', Math.max(1, Math.min(5, Math.floor(poolMax / 2))), 1, 100, problems)
+  const searchPerUser = readInteger(env, 'WAM_SEARCH_MAX_PER_USER', Math.min(2, searchTotal), 1, 20, problems)
+  if (searchPerUser > searchTotal) problems.push('WAM_SEARCH_MAX_PER_USER must not exceed WAM_SEARCH_MAX_TOTAL')
+  if (poolMax > 1 && searchTotal >= poolMax) {
+    problems.push('WAM_SEARCH_MAX_TOTAL must be smaller than WAM_DB_POOL_MAX, so ordinary requests always find a connection')
+  }
 
   if (
     environment === undefined ||
@@ -104,7 +118,8 @@ export function loadConfig(env: Env): AppConfig {
     sessions: { idleMinutes, absoluteHours },
     mfaEncryptionKey,
     logLevel,
-    importEnabled
+    importEnabled,
+    search: { perUser: searchPerUser, total: searchTotal }
   }
 }
 
@@ -117,13 +132,18 @@ export function loadMigrationConfig(env: Env): MigrationConfig {
   const problems: string[] = []
   const environment = readEnum(env, 'WAM_ENV', ENVIRONMENTS, undefined, problems)
   const connectionString = readDatabaseUrl(env, 'WAM_MIGRATION_DATABASE_URL', problems)
+  const lockTimeoutMs = readInteger(env, 'WAM_MIGRATION_LOCK_TIMEOUT_MS', 10_000, 100, 600_000, problems)
 
   if (environment === undefined || connectionString === undefined || problems.length > 0) {
     throw new ConfigError(problems)
   }
   // One connection, no statement timeout: a migration is a single
-  // transaction that may legitimately run longer than a request.
-  return { environment, database: { connectionString, poolMax: 1, statementTimeoutMs: 0 } }
+  // transaction that may legitimately run longer than a request. But its
+  // LOCK TABLE statements wait at most lockTimeoutMs: a migration queued
+  // behind an open transaction would otherwise hold its place in the lock
+  // queue and stall every later query on those tables (finding NF-6). On
+  // timeout the whole run rolls back and can simply be retried.
+  return { environment, database: { connectionString, poolMax: 1, statementTimeoutMs: 0, lockTimeoutMs } }
 }
 
 /**

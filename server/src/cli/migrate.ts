@@ -111,5 +111,11 @@ function report({ error, results }: MigrationResultSet, io: CliIo): number {
   if (error === undefined) return 0
   const message = error instanceof Error ? error.message : typeof error === 'string' ? error : 'unknown error'
   io.err(`Migration failed and was rolled back; nothing from this run was applied. Cause: ${message}`)
+  if (typeof error === 'object' && error !== null && (error as { code?: unknown }).code === '55P03') {
+    io.err(
+      'Another session holds a lock on a table this migration changes. Stop the server (or wait for the long ' +
+        'transaction to end), then run the command again; WAM_MIGRATION_LOCK_TIMEOUT_MS sets how long it waits.'
+    )
+  }
   return 1
 }

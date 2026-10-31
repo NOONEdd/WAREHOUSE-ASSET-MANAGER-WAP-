@@ -7,8 +7,9 @@ import { hashPassword } from '../../src/auth/passwords.js'
 import { open, seal, secretKeyFrom, totpSecretContext } from '../../src/auth/secretBox.js'
 import { newTotpSecret, totpCode } from '../../src/auth/totp.js'
 import { base32Decode } from './base32.js'
-import type { Database } from '../../src/db/connection.js'
+import { createDatabase, createPool, type Database } from '../../src/db/connection.js'
 import { createMigrator } from '../../src/db/migrator.js'
+import type { SearchLimits } from '../../src/http/searchLimiter.js'
 import { connect, createTestDatabase, type TestDatabase } from './testDatabase.js'
 
 // Helpers for tests that drive the HTTP API against a migrated throwaway
@@ -43,6 +44,11 @@ export interface HarnessOptions {
   readonly importEnabled?: boolean
   /** pino options for the app; default false (no logging). Log-privacy tests pass the server's own options. */
   readonly logger?: AppOptions['logger']
+  /** The app's statement timeout in ms; default 10 s (as `connect`). Failure tests shorten it. */
+  readonly appStatementTimeoutMs?: number
+  /** The app's pool size; default 2 (as `connect`). */
+  readonly appPoolMax?: number
+  readonly searchLimits?: SearchLimits
 }
 
 export async function createHarness(options: HarnessOptions = {}): Promise<Harness> {
@@ -50,10 +56,15 @@ export async function createHarness(options: HarnessOptions = {}): Promise<Harne
   const ownerDb = connect(tdb.urls.owner)
   const { error } = await createMigrator(ownerDb).migrateToLatest()
   expect(error).toBeUndefined()
-  const appDb = connect(tdb.urls.app)
+  const { logger = false, appStatementTimeoutMs, appPoolMax, ...rest } = options
+  const appDb =
+    appStatementTimeoutMs === undefined && appPoolMax === undefined
+      ? connect(tdb.urls.app)
+      : createDatabase(
+          createPool({ connectionString: tdb.urls.app, poolMax: appPoolMax ?? 2, statementTimeoutMs: appStatementTimeoutMs ?? 10_000 }, () => undefined)
+        )
   const superDb = connect(tdb.urls.superuser)
   const mfaKey = randomBytes(32)
-  const { logger = false, ...rest } = options
   const app = buildApp({ db: appDb, logger, publicOrigin: ORIGIN, sessions: SESSIONS, mfaEncryptionKey: mfaKey, ...rest })
   await app.ready()
   return {

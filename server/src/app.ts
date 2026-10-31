@@ -14,6 +14,7 @@ import { registerAdminCatalogRoutes } from './http/routes/adminCatalogRoutes.js'
 import { registerAdminSecurityRoutes } from './http/routes/adminSecurityRoutes.js'
 import { registerAdminUserRoutes } from './http/routes/adminUserRoutes.js'
 import { registerAssetRoutes } from './http/routes/assetRoutes.js'
+import { SearchLimiter, type SearchLimits } from './http/searchLimiter.js'
 import { registerAuthRoutes } from './http/routes/authRoutes.js'
 import { registerCatalogRoutes } from './http/routes/catalogRoutes.js'
 import { registerImportRoutes } from './http/routes/importRoutes.js'
@@ -33,6 +34,8 @@ export interface AppOptions {
   readonly readinessTimeoutMs?: number
   /** See AppConfig.importEnabled. Off unless set: the import routes do not exist at all. */
   readonly importEnabled?: boolean
+  /** Name searches running at once (decision O-20); default 2 per user, 5 in all. */
+  readonly searchLimits?: SearchLimits
 }
 
 /**
@@ -91,7 +94,7 @@ export function buildApp(options: AppOptions): FastifyInstance {
   registerAdminCatalogRoutes(app, { db: options.db })
   registerAdminSecurityRoutes(app, { db: options.db })
   registerCatalogRoutes(app, { db: options.db })
-  registerAssetRoutes(app, { db: options.db })
+  registerAssetRoutes(app, { db: options.db, searches: new SearchLimiter(options.searchLimits) })
   if (options.importEnabled === true) registerImportRoutes(app, { db: options.db })
   return app
 }

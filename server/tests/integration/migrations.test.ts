@@ -96,6 +96,49 @@ describe('migration CLI', () => {
       expect((await readMigrationState(owner)).pending).toEqual([ALL.at(-1)])
     }))
 
+  it('a migration that cannot get its locks fails within WAM_MIGRATION_LOCK_TIMEOUT_MS, changes nothing, and succeeds once the lock is gone (NF-6)', () =>
+    withDatabase(async (tdb, owner) => {
+      expect((await cli(tdb.urls.owner, ['up', '--apply'])).code).toBe(0)
+      const latest = String(ALL.at(-1))
+      const env = { WAM_ENV: 'development', WAM_MIGRATION_LOCK_TIMEOUT_MS: '300' }
+      // Every guarded down locks wam.persons in ACCESS EXCLUSIVE mode first, so an open transaction that merely
+      // read the table makes it wait. Every up of the asset schema changes wam.persons or a table referencing it
+      // (DDL needs at least SHARE ROW EXCLUSIVE), so a transaction holding SHARE on it makes the up wait.
+      const holder = connect(tdb.urls.owner)
+      try {
+        const attempts = await holder.connection().execute(async (conn) => {
+          await sql`BEGIN`.execute(conn)
+          await sql`SELECT count(*) FROM wam.persons`.execute(conn)
+          const started = Date.now()
+          const down = await cli(tdb.urls.owner, ['down', '--apply'], env)
+          const downMs = Date.now() - started
+          await sql`ROLLBACK`.execute(conn)
+          return { down, downMs }
+        })
+        expect(attempts.down.code).toBe(1)
+        expect(attempts.downMs).toBeLessThan(5_000)
+        expect(attempts.down.err.join('\n')).toMatch(/lock timeout[\s\S]*Another session holds a lock/)
+        expect((await readMigrationState(owner)).applied).toEqual(ALL)
+
+        expect((await cli(tdb.urls.owner, ['down', '--apply'], env)).code).toBe(0)
+        expect((await readMigrationState(owner)).pending).toEqual([latest])
+
+        const up = await holder.connection().execute(async (conn) => {
+          await sql`BEGIN`.execute(conn)
+          await sql`LOCK TABLE wam.persons IN SHARE MODE`.execute(conn)
+          const result = await cli(tdb.urls.owner, ['up', '--apply'], env)
+          await sql`ROLLBACK`.execute(conn)
+          return result
+        })
+        expect(up.code).toBe(1)
+        expect((await readMigrationState(owner)).pending).toEqual([latest])
+        expect((await cli(tdb.urls.owner, ['up', '--apply'], env)).code).toBe(0)
+        expect((await readMigrationState(owner)).applied).toEqual(ALL)
+      } finally {
+        await holder.destroy()
+      }
+    }))
+
   it('refuses a database that has a migration this code does not know (database newer than code)', () =>
     withDatabase(async (tdb, owner) => {
       expect((await cli(tdb.urls.owner, ['up', '--apply'])).code).toBe(0)

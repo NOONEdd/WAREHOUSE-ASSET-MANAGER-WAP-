@@ -73,8 +73,11 @@ value stops the process with a list of every problem (never echoing the value).
 | `WAM_HTTP_HOST` | no | `127.0.0.1` | Loopback: in production the server sits behind a reverse proxy on the same machine. |
 | `WAM_HTTP_PORT` | no | `3000` | |
 | `WAM_DB_POOL_MAX` | no | `10` | Connections per server process (1–100). |
-| `WAM_DB_STATEMENT_TIMEOUT_MS` | no | `15000` | Per-statement limit for the server (100–600000). |
-| `WAM_LOG_LEVEL` | no | `info` | `fatal` `error` `warn` `info` `debug` `trace` `silent`. Logs are JSON on stdout. Request lines record the method and path, never the query string: query strings carry search terms, a person's name among them, and erasure cannot reach a log line (PD-05). Errors appear only as an allowlisted summary (see [Log privacy](#log-privacy)). |
+| `WAM_DB_STATEMENT_TIMEOUT_MS` | no | `15000` | Per-statement limit for the server (100–600000). A statement that exceeds it answers `503 DATABASE_TIMEOUT`. |
+| `WAM_SEARCH_MAX_PER_USER` | no | `2` | Name searches (asset list or count, person list, with a non-blank `q`) one user may have running at once, across all their sessions; more answer `429 SEARCH_BUSY` with `Retry-After: 1` (decision O-20). |
+| `WAM_SEARCH_MAX_TOTAL` | no | half of `WAM_DB_POOL_MAX`, at most `5` | Name searches all users together may have running at once. Must be smaller than `WAM_DB_POOL_MAX`, so ordinary requests always find a connection. The counter is per process: exact for the single server process this design runs. |
+| `WAM_MIGRATION_LOCK_TIMEOUT_MS` | no | `10000` | Migration CLI only (100–600000): how long one of its statements waits for a table lock before the whole run rolls back (finding NF-6). Without it a migration queued behind an open transaction would block every later query on that table. |
+| `WAM_LOG_LEVEL` | no | `info` | `fatal` `error` `warn` `info` `debug` `trace` `silent`. Logs are JSON on stdout. Request lines record the method, the path without its query string, and the remote address: query strings carry search terms, a person's name among them, and erasure cannot reach a log line (PD-05); the client-chosen `Host` header is not recorded (NF-4). Errors appear only as an allowlisted summary (see [Log privacy](#log-privacy)). Keep it at `info` or lower in production: the erasure journal lines (`person.erased`) are `info`. |
 | `WAM_IMPORT_ENABLED` | no | `false` | `true` or `false`. Whether the staged-import routes (`/api/warehouses/:id/imports…`) exist at all. **Keep it `false`**: imports stay disabled until gates G-2…G-9 pass and O-14 admits real spreadsheets (decision O-16). Import retention runs daily either way. |
 
 For a Unix-socket connection, put the percent-encoded socket directory where the host goes:
@@ -111,6 +114,11 @@ npm run db:migrate -- down --apply    # reverts the latest migration; refused wh
 - **Production recovery is a forward migration or a restore from backup, never `down`**, because reverting
   can destroy data written after the migration. Take and verify a backup before every production migration
   (the backup/restore procedure is a Phase 1D deliverable).
+- Migrations lock the tables they change. Each lock is awaited at most `WAM_MIGRATION_LOCK_TIMEOUT_MS`
+  (10 s); if a long transaction holds one, the run rolls back and the CLI says so. Stop the server for a
+  production migration (it refuses to start with pending migrations anyway) and run it again.
+- `0009_search_keys` adds stored, generated name keys (`assets.name_key`, `persons.display_name_key`); it rewrites
+  both tables (seconds at 50,000 rows) and its `down` simply drops the derived columns.
 
 ## Owner account (`npm run owner`)
 
@@ -126,7 +134,16 @@ npm run owner -- recover --yes             # owner locked out: new setup code, o
 npm run owner -- recover --reset-mfa --yes # as above, and removes the owner's authenticator (lost phone, no recovery codes)
 npm run owner -- transfer --to <username> --yes                     # ownership moves to another active user (administrator profiles of both accounts are removed)
 npm run owner -- end-all-sessions --yes                             # incident response: everyone signs in again
+npm run owner -- reapply-erasures --ids-file <file> --yes           # after restoring a backup: erase again (see below)
 ```
+
+**Erasure after restoring a backup (review recommendation R-2).** A backup taken before a person was erased
+brings the name back when restored. Every committed erasure therefore writes one id-only line to the server log
+(`{"event":"person.erased","personId":…}`), which lives outside the database. After a restore, **before starting the
+server**, collect the person ids from those lines newer than the backup (one per line in a file, `#` comments
+allowed) and run `reapply-erasures`. It erases each listed person the restored database still holds unerased —
+which also tombstones their stored responses — as the owner, in one transaction, and audits the counts. Running it
+twice changes nothing. It requires that server logs are kept at least as long as backups (docs/operations/runbook.md).
 
 A setup code is shown once, works once, and expires after 24 hours. Hand it over in person or by phone, never by
 e-mail or chat. The owner then chooses a password on the sign-in page ("Set password with a setup code") and, at the
@@ -151,10 +168,26 @@ only), and the same for a nested cause. This holds for every logging path: the s
 `buildApp` whatever logger options it is given, the request error handler, the pool and timer listeners, start-up,
 the CLIs' unexpected errors, and uncaught exceptions and unhandled rejections (one summary line, then exit 1).
 
-**PostgreSQL's own log is outside the application and must be configured at deployment.** With the default
-`log_error_verbosity`, the database server writes the same `DETAIL: Failing row contains (…)` into its log
-(verified on 16.15). Set `log_error_verbosity = terse`, keep `log_parameter_max_length_on_error = 0` (the
-default) and `log_statement = none`, and treat the database server's log as personal data.
+**PostgreSQL's own log is outside the application and must be configured at deployment (finding NF-2).** With its
+defaults the database server writes `DETAIL: Failing row contains (…)` (a row's values) for a failed statement,
+and duration or statement logging prints bind parameters (`log_parameter_max_length` defaults to unlimited). The
+policy, verified on PostgreSQL 16.15 by `tests/integration/databaseLogging.test.ts`:
+
+| Setting | Value | Why |
+|---|---|---|
+| `log_error_verbosity` | `terse` | Drops DETAIL, HINT, QUERY and CONTEXT from every logged message |
+| `log_parameter_max_length_on_error` | `0` (the default) | No bind parameters on failed statements |
+| `log_parameter_max_length` | `0` | No bind parameters on statement or duration lines |
+| `log_statement` | `none` (or `ddl`) | `mod`/`all` would log every change |
+| `log_min_duration_statement` | `-1`, or ≥ `250` for slow-query diagnosis | Durations and statement text with `$1` placeholders only |
+| `log_min_error_statement` | `error` (the default) | The failing statement's text, with placeholders, stays available |
+| `auto_explain` | not loaded | It can log parameters and plans with values |
+
+Check the settings in effect with `psql -v ON_ERROR_STOP=1 -d wam -f server/sql/check-logging-settings.sql` (as
+`wam_app`); it names every unsafe setting. **Residual:** PostgreSQL's primary message can still quote an invalid
+input value (for example `22P02 invalid input syntax for type integer: "…"`); no setting removes it. The server
+validates types and formats before the database, so this needs an application defect, and the database log is
+still personal data: restrict access to it and keep it no longer than the application log (runbook).
 
 ## HTTP conventions (apply to every endpoint)
 
@@ -168,6 +201,14 @@ default) and `log_statement = none`, and treat the database server's log as pers
 - Errors always look like `{"error":{"code":"NOT_FOUND","message":"Not found","requestId":"…"}}`, with `details`
   only for information meant for the caller. A warehouse the caller may not see answers exactly like one that does
   not exist.
+- Database failures (decision O-21, implemented as recommended): `503` with `Retry-After`, never SQL or driver text.
+  `SERVICE_UNAVAILABLE` (database unreachable, connection lost, deadlock or serialization failure; `Retry-After: 5`),
+  `DATABASE_TIMEOUT` (statement or lock timeout; `Retry-After: 2`), `OUTCOME_UNKNOWN`
+  (the connection broke while COMMIT was in flight; `Retry-After: 2`). For a change (a request with an
+  Idempotency-Key) `details.outcome` is `not_applied` or `unknown`. **In both cases repeat the request with the same
+  Idempotency-Key**: if the first attempt was applied the stored response comes back (`Idempotency-Replayed: true`),
+  otherwise it is applied once. Never send a new key for a change whose outcome is not known.
+- `429 SEARCH_BUSY` with `Retry-After: 1`: too many name searches running at once (see `WAM_SEARCH_MAX_*`).
 - Every response: `Cache-Control: no-store`, `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`,
   `Content-Security-Policy: default-src 'none'; frame-ancestors 'none'`; over https also HSTS.
 - Responses declare JSON schemas, so only listed fields are ever serialized; request bodies reject unknown fields.

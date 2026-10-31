@@ -226,6 +226,8 @@ export interface PersonsTable {
   id: BigId
   warehouse_id: InsertOnly<number>
   display_name: string | null
+  /** wam.name_key(display_name), generated (migration 0009); NULL once erased. */
+  display_name_key: ReadOnly<string | null>
   erased_at: ColumnType<Date | null, never, Date | null>
   created_at: ReadOnly<Date>
   created_by: ReadOnly<number>
@@ -240,6 +242,8 @@ export interface AssetsTable {
   asset_code: string
   asset_code_key: ReadOnly<string>
   name: string
+  /** wam.name_key(name), generated (migration 0009). */
+  name_key: ReadOnly<string>
   item_type_id: number
   model: string | null
   serial_number: string | null
@@ -373,6 +377,7 @@ export function createPool(config: DatabaseConfig, onConnectionError: (err: Erro
     connectionTimeoutMillis: 5_000,
     idleTimeoutMillis: 30_000,
     statement_timeout: config.statementTimeoutMs,
+    ...(config.lockTimeoutMs === undefined ? {} : { lock_timeout: config.lockTimeoutMs }),
     // A request that opens a transaction and then stalls must not hold
     // row locks indefinitely.
     idle_in_transaction_session_timeout: 60_000,

@@ -10,13 +10,15 @@ import { IMPORT_RETENTION_INTERVAL_MS, MAINTENANCE_INTERVAL_MS, runMaintenance }
 /**
  * What a request log line records: Fastify's default fields, with the URL's query string left out. Query
  * strings carry search terms — a person's name among them (`/persons?q=…`) — and a log line is beyond the
- * reach of erasure (decision PD-05; found by the system test). Path parameters are ids only.
+ * reach of erasure (decision PD-05; found by the system test). Path parameters are ids only. The Host header
+ * is left out too: the client chooses it, nothing in the server relies on it (cookies and the forgery check use
+ * the configured public origin, which the start-up line records), so it would only be untrusted text in the log
+ * (finding NF-4).
  */
 export function requestLogFields(request: FastifyRequest): Record<string, unknown> {
   return {
     method: request.method,
     url: request.url.split('?')[0],
-    host: request.host,
     remoteAddress: request.ip,
     remotePort: request.socket.remotePort
   }
@@ -65,6 +67,7 @@ export async function startServer(env: Env): Promise<RunningServer> {
       sessions: config.sessions,
       mfaEncryptionKey: config.mfaEncryptionKey,
       importEnabled: config.importEnabled,
+      searchLimits: config.search,
       logger: loggerOptions(config.logLevel)
     })
     const url = await app.listen({ host: config.http.host, port: config.http.port })

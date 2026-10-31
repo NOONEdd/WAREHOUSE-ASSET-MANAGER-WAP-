@@ -1,6 +1,7 @@
 import { sql, type Kysely } from 'kysely'
 import { permissionsOfScope, type PermissionScope } from '../access/permissions.js'
 import { AppError } from '../appError.js'
+import { requiredName } from './names.js'
 import { recordAudit, type AuditContext } from '../audit/audit.js'
 import type { Database } from '../db/connection.js'
 import { isForeignKeyViolation, isUniqueViolation } from './dbErrors.js'
@@ -86,13 +87,14 @@ export async function createProfile(
   actor: Actor,
   input: { readonly name: string; readonly description: string; readonly scope: PermissionScope; readonly permissions: readonly string[] }
 ): Promise<Profile> {
+  const name = requiredName(input.name, 'name')
   if (input.scope === 'system') assertMayManageSystemProfiles(actor)
   const permissions = validatePermissions(input.scope, input.permissions)
   let id: number
   try {
     const row = await trx
       .insertInto('permission_profiles')
-      .values({ name: input.name.trim(), description: input.description.trim(), scope: input.scope })
+      .values({ name, description: input.description.trim(), scope: input.scope })
       .returning('id')
       .executeTakeFirstOrThrow()
     id = row.id
@@ -111,7 +113,7 @@ export async function createProfile(
     outcome: 'success',
     actor: auditActor(actor),
     target: { type: 'profile', id },
-    details: { after: { name: input.name.trim(), scope: input.scope, permissions } }
+    details: { after: { name, scope: input.scope, permissions } }
   })
   return getProfile(trx, id)
 }
@@ -144,7 +146,7 @@ export async function updateProfile(
   const afterPermissions = input.permissions === undefined ? [...beforePermissions] : validatePermissions(current.scope, input.permissions)
   const before = { name: current.name, description: current.description, isActive: current.is_active }
   const after = {
-    name: input.name?.trim() ?? before.name,
+    name: input.name === undefined ? before.name : requiredName(input.name, 'name'),
     description: input.description?.trim() ?? before.description,
     isActive: input.isActive ?? before.isActive
   }
@@ -232,11 +234,12 @@ export async function createJobTitle(
   actor: Actor,
   input: { readonly name: string; readonly description: string }
 ): Promise<JobTitle> {
+  const name = requiredName(input.name, 'name')
   let row: JobTitle
   try {
     row = await trx
       .insertInto('job_titles')
-      .values({ name: input.name.trim(), description: input.description.trim() })
+      .values({ name, description: input.description.trim() })
       .returning(jobTitleColumns)
       .executeTakeFirstOrThrow()
   } catch (err) {
@@ -264,7 +267,7 @@ export async function updateJobTitle(
   if (current === undefined) throw new AppError('NOT_FOUND')
   if (current.version !== input.version) throw new AppError('VERSION_CONFLICT', { currentVersion: current.version })
   const after = {
-    name: input.name?.trim() ?? current.name,
+    name: input.name === undefined ? current.name : requiredName(input.name, 'name'),
     description: input.description?.trim() ?? current.description,
     isActive: input.isActive ?? current.isActive
   }

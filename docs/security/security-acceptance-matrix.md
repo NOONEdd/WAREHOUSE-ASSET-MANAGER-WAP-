@@ -88,7 +88,7 @@ run of the built server as real processes.
 | 2.2.1, 2.2.2 | Server-side positive validation | JSON schemas on every route | **Done** — unit/app |
 | 2.3.3 | Transactions: all or nothing | one transaction per change, audit included | **Done** — int/idempotency |
 | — | Retried changes never run twice (D-05) | `Idempotency-Key` stored with the change | **Done** — int/idempotency, int/adminApi, mutation |
-| 2.4.1 | Anti-automation beyond login | — | **Gap**: no general rate limit yet (a flood of refused requests also writes audit rows). Reverse-proxy limits in Phase 1E; application limits with the asset APIs |
+| 2.4.1 | Anti-automation beyond login | — | **Gap**: no general rate limit yet (a flood of refused requests also writes audit rows). Reverse-proxy limits in Phase 1E; application limits with the asset APIs; name searches are capped per user and in all (O-20, `429 SEARCH_BUSY`) |
 | 15.3.1, 15.3.3 | Only required fields returned; mass assignment blocked | response schemas; unknown body fields rejected | **Done** — int/adminApi |
 | 15.3.4 | Real client address through proxies | `trustProxy: false` until a proxy exists | **Planned 1E — deployment blocker**: behind nginx all clients would share one address and the per-address throttle would affect everyone |
 | 15.3.6 | Prototype pollution defenses | Fastify rejects `__proto__`/`constructor` keys; Maps/Sets in access code | **Done** (framework default, review) |
@@ -98,12 +98,12 @@ run of the built server as real processes.
 | ASVS | Requirement (short) | Implementation | Status / evidence |
 |---|---|---|---|
 | 16.2.1, 16.2.2 | Who/what/when/where; UTC | `audit_events` (timestamptz), request IDs | **Done** — int/auth, int/adminApi |
-| 16.2.5 | Sensitive data never logged | secret-name guard in `audit.ts` (incl. recovery codes, otpauth links); log redaction; request lines without query strings (ST-2); errors only as an allowlisted summary on every logging path (`logPrivacy.ts`, finding NF-1) | **Done in the application** — unit (guard, logPrivacy), int/auth, int/mfa, int/logPrivacy (sentinel scans of captured log lines, injected database faults), real-process check, mutation. **Open for the database server's own log**: `log_error_verbosity = terse` at deployment (Phase 1E) |
+| 16.2.5 | Sensitive data never logged | secret-name guard in `audit.ts` (incl. recovery codes, otpauth links); log redaction; request lines without query strings (ST-2); errors only as an allowlisted summary on every logging path (`logPrivacy.ts`, finding NF-1); request lines without the client-chosen `Host` header (NF-4); an id-only `person.erased` journal line per erasure (R-2); PostgreSQL's own log: policy in the README, checked by `server/sql/check-logging-settings.sql` | **Done in the application** — unit (guard, logPrivacy), int/auth, int/mfa, int/logPrivacy (sentinel scans of captured log lines, injected database faults), real-process check, mutation. **Open for the database server's own log**: `log_error_verbosity = terse` at deployment (Phase 1E); NF-4 `requestLog.test.ts`; NF-2 `databaseLogging.test.ts` (defaults leak rows and parameters, the policy does not; checker refuses the defaults). **Production database setting is a deployment gate** |
 | 16.3.1, 16.3.2 | Authentication events and authorization failures logged | login/setup/password events, second-step and MFA events, lock, `authz.denied`, `session.ended_mfa_required` | **Done** — int/auth, int/adminApi, int/mfa |
 | 16.4.1 | Log injection prevented | JSON logs (pino); parameterized audit inserts | **Done** (review) |
 | 16.4.2 | Logs protected from modification | audit append-only by privileges and trigger | **Done** — int/schema, mutation |
 | 16.4.3 | Logs shipped to a separate system | — | **Planned 1D/1E** |
-| 16.5.1, 16.5.3 | Generic errors; fail closed | `http/errors.ts`; startup gate | **Done** — unit/app, int/safety |
+| 16.5.1, 16.5.3 | Generic errors; fail closed | `http/errors.ts`; startup gate; database failures answer 503 `SERVICE_UNAVAILABLE` / `DATABASE_TIMEOUT` / `OUTCOME_UNKNOWN` with `Retry-After` and no internal text (O-21, `db/failures.ts`) | **Done** — unit/app, int/safety, int/databaseFailures (terminated backends before and during COMMIT, timeout, unreachable database, deadlock) |
 | 11.4.2 | Approved password hashing with current parameters | Argon2id 19 MiB / t=2 / p=1, rehash on login | **Done** — unit/passwords, int/auth |
 | 11.1.2 | Cryptographic inventory | spec §3.3 | **Done** (review) |
 | 11.2.2 | Crypto agility, key replacement | key fingerprint stored with every sealed secret; Argon2 parameters stored per hash | **Partial** — no re-encryption command for the MFA key yet (L-8, Phase 1E) |

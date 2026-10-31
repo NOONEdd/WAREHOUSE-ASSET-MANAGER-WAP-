@@ -266,14 +266,62 @@ describe('NF-1: expected failures keep their responses, and their log lines carr
     expect(lines.slice(from).join('\n')).not.toContain(sessionValue)
   })
 
-  it('a database error on an unchanged earlier path (a warehouse renamed to whitespace) also leaves nothing in the logs', async () => {
-    // Pre-existing (Phase 1B-2) and not changed here: a whitespace-only warehouse name reaches the database's
-    // check. What this test pins is the log: the row (code, name) must not appear in it.
-    const version = (await h.ownerDb.selectFrom('warehouses').select('version').where('id', '=', warehouseId).executeTakeFirstOrThrow()).version
+  it('an erasure writes one id-only journal line (R-2) and the name nowhere', async () => {
+    const created = await call(h, { method: 'POST', url: `/api/warehouses/${String(warehouseId)}/persons`, cookie: owner, headers: { 'idempotency-key': randomUUID() }, payload: { displayName: S.displayName } })
+    expect(created.statusCode).toBe(201)
+    const person = created.json<{ id: number; version: number }>()
     const from = lines.length
-    const res = await call(h, { method: 'PATCH', url: `/api/admin/warehouses/${String(warehouseId)}`, cookie: owner, headers: { 'idempotency-key': randomUUID() }, payload: { version, name: '   ' } })
-    expect(res.statusCode).toBeGreaterThanOrEqual(400)
-    expect(res.body).not.toContain(S.warehouse)
+    const erased = await call(h, {
+      method: 'POST',
+      url: `/api/warehouses/${String(warehouseId)}/persons/${String(person.id)}/erase`,
+      cookie: owner,
+      headers: { 'idempotency-key': randomUUID() },
+      payload: { version: person.version }
+    })
+    expect(erased.statusCode).toBe(200)
+    const journal = parsed(from).filter((l) => (l as { event?: string }).event === 'person.erased')
+    expect(journal).toHaveLength(1)
+    expect(journal[0]).toMatchObject({ level: 30, personId: person.id, msg: 'person erased' })
     expectClean(from)
+  })
+
+  it('whitespace-only names of warehouses, permission profiles and job titles are validation errors on create and update (NF-3)', async () => {
+    const start = lines.length
+    const send = (method: 'POST' | 'PATCH', url: string, payload: Record<string, unknown>) =>
+      call(h, { method, url, cookie: owner, headers: { 'idempotency-key': randomUUID() }, payload })
+    const profile = await send('POST', '/api/admin/profiles', { name: `Zq profile ${tag}`, scope: 'warehouse', permissions: ['asset.view'] })
+    const jobTitle = await send('POST', '/api/admin/job-titles', { name: `Zq title ${tag}` })
+    expect([profile.statusCode, jobTitle.statusCode]).toEqual([201, 201])
+    const profileId = profile.json<{ id: number }>().id
+    const jobTitleId = jobTitle.json<{ id: number }>().id
+    const versions = async () => ({
+      warehouse: (await h.ownerDb.selectFrom('warehouses').select('version').where('id', '=', warehouseId).executeTakeFirstOrThrow()).version,
+      profile: (await h.ownerDb.selectFrom('permission_profiles').select('version').where('id', '=', profileId).executeTakeFirstOrThrow()).version,
+      jobTitle: (await h.ownerDb.selectFrom('job_titles').select('version').where('id', '=', jobTitleId).executeTakeFirstOrThrow()).version
+    })
+    const before = await versions()
+    const counts = async () =>
+      Promise.all(['warehouses', 'permission_profiles', 'job_titles'].map(async (t) => Number((await sql<{ n: string }>`SELECT count(*) AS n FROM ${sql.table(`wam.${t}`)}`.execute(h.ownerDb)).rows[0]?.n)))
+    const countsBefore = await counts()
+    for (const blank of ['   ', '\t \n', '  　']) {
+      const attempts = [
+        send('POST', '/api/admin/warehouses', { code: `ZQ${tag.slice(0, 4).toUpperCase()}`, name: blank }),
+        send('PATCH', `/api/admin/warehouses/${String(warehouseId)}`, { version: before.warehouse, name: blank }),
+        send('POST', '/api/admin/profiles', { name: blank, scope: 'warehouse', permissions: ['asset.view'] }),
+        send('PATCH', `/api/admin/profiles/${String(profileId)}`, { version: before.profile, name: blank }),
+        send('POST', '/api/admin/job-titles', { name: blank }),
+        send('PATCH', `/api/admin/job-titles/${String(jobTitleId)}`, { version: before.jobTitle, name: blank })
+      ]
+      for (const res of await Promise.all(attempts)) {
+        const from = lines.length
+        expect(res.statusCode, `${JSON.stringify(blank)}: ${res.body}`).toBe(400)
+        expect(res.json<{ error: unknown }>().error).toMatchObject({ code: 'VALIDATION_FAILED', details: { field: 'name', reason: 'blank' } })
+        expect(res.body).not.toContain(S.warehouse)
+        expectClean(from)
+      }
+    }
+    expect(parsed(start).filter((l) => l.level >= 50)).toEqual([])
+    expect(await versions()).toEqual(before)
+    expect(await counts()).toEqual(countsBefore)
   })
 })

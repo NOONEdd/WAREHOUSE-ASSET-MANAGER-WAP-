@@ -1,5 +1,6 @@
 import { sql, type Kysely } from 'kysely'
 import { AppError } from '../appError.js'
+import { requiredName } from './names.js'
 import { recordAudit, type AuditContext } from '../audit/audit.js'
 import type { Database } from '../db/connection.js'
 import { isUniqueViolation } from './dbErrors.js'
@@ -33,11 +34,12 @@ export async function createWarehouse(
   actor: Actor,
   input: { readonly code: string; readonly name: string }
 ): Promise<Warehouse> {
+  const name = requiredName(input.name, 'name')
   let row: Warehouse
   try {
     row = await trx
       .insertInto('warehouses')
-      .values({ code: input.code.trim().toUpperCase(), name: input.name.trim() })
+      .values({ code: input.code.trim().toUpperCase(), name })
       .returning(columns)
       .executeTakeFirstOrThrow()
   } catch (err) {
@@ -62,11 +64,12 @@ export async function updateWarehouse(
   id: number,
   input: { readonly version: number; readonly name?: string | undefined; readonly isActive?: boolean | undefined }
 ): Promise<Warehouse> {
+  const name = input.name === undefined ? undefined : requiredName(input.name, 'name')
   const current = await trx.selectFrom('warehouses').select(columns).where('id', '=', id).forUpdate().executeTakeFirst()
   if (current === undefined) throw new AppError('NOT_FOUND')
   if (current.isSystem) throw new AppError('FORBIDDEN', { reason: 'the system warehouse UNASSIGNED cannot be changed' })
   if (current.version !== input.version) throw new AppError('VERSION_CONFLICT', { currentVersion: current.version })
-  const after = { name: input.name?.trim() ?? current.name, isActive: input.isActive ?? current.isActive }
+  const after = { name: name ?? current.name, isActive: input.isActive ?? current.isActive }
   const changed = Object.fromEntries(
     (Object.keys(after) as (keyof typeof after)[]).filter((k) => after[k] !== current[k]).map((k) => [k, { before: current[k], after: after[k] }])
   )
